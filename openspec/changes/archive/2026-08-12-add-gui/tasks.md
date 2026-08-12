@@ -45,5 +45,5 @@
 ## 7. Verification
 
 - [x] 7.1 Manual: `cargo run --bin klondike-gui` deals, renders the board, plays a scripted sequence (select→move, deal, auto-move, undo, new game), and shows a win
-- [ ] 7.2 Manual: build the WASM target and load `web/index.html` locally to confirm it renders and is playable in a browser
+- [x] 7.2 Manual: build the WASM target and load `web/index.html` locally to confirm it renders and is playable in a browser
 - [x] 7.3 Run `cargo test`, `cargo fmt --check`, and `cargo clippy --all-targets -- -D warnings` clean (native targets)
