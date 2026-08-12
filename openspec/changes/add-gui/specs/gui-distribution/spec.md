@@ -1,0 +1,19 @@
+## ADDED Requirements
+
+### Requirement: WebAssembly build
+The GUI SHALL build to a WebAssembly artifact that runs in a modern browser, accompanied by a static HTML page that loads and starts it. Card and other assets SHALL be served alongside the page so the browser build loads them at runtime.
+
+#### Scenario: WASM artifact runs in a browser
+- **WHEN** the WASM build and its HTML page and assets are served over HTTP and opened in a modern browser
+- **THEN** the game renders and is playable
+
+### Requirement: GitHub Pages deployment
+The repository SHALL include a continuous-deployment workflow that builds the WebAssembly artifact and publishes it, with its page and assets, to GitHub Pages on pushes to the main branch, so the game is playable from a public URL.
+
+#### Scenario: Push deploys the browser build
+- **WHEN** a commit is pushed to the main branch
+- **THEN** the workflow builds the WASM and publishes the page and assets to GitHub Pages
+
+#### Scenario: Play-in-browser link
+- **WHEN** a reader views the repository README
+- **THEN** it links to the deployed GitHub Pages URL where the game can be played

@@ -1,0 +1,47 @@
+name: Deploy GUI to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Build WASM GUI
+        run: cargo build --release --target wasm32-unknown-unknown --bin klondike-gui
+      - name: Assemble dist/
+        run: |
+          mkdir -p dist
+          cp web/index.html dist/
+          cp target/wasm32-unknown-unknown/release/klondike-gui.wasm dist/
+          # Assets are served relative to the page (king-logo.png, cards/...).
+          cp -r assets/. dist/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

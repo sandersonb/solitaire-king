@@ -1,0 +1,30 @@
+[package]
+name = "klondike"
+version = "0.1.0"
+edition = "2021"
+description = "Core model for Klondike Solitaire (classic rules, Windows Standard scoring)"
+license = "MIT OR Apache-2.0"
+authors = ["Brian Sanderson"]
+
+[lib]
+name = "klondike"
+path = "src/lib.rs"
+
+[[bin]]
+name = "klondike"
+path = "src/main.rs"
+
+[[bin]]
+name = "klondike-gui"
+path = "src/gui/main.rs"
+
+# The library target (src/lib.rs) uses the standard library only and pulls in
+# none of these. macroquad (the GUI) builds for native and wasm.
+[dependencies]
+macroquad = "0.4"
+
+# CLI-only dependencies, native targets only — excluded from the wasm GUI build
+# (crossterm does not compile for wasm32, and the CLI is native-only anyway).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+crossterm = "0.28"
+clap = { version = "4", features = ["derive"] }

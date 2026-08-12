@@ -1,0 +1,23 @@
+Assets
+======
+
+king-logo.png
+  The Klondike splash/logo artwork. Shown on the startup splash and the win
+  banner.
+
+cards/
+  Card face sprites and a back, named by rank + suit code, e.g. `AS.png`
+  (Ace of Spades), `10H.png` (Ten of Hearts), `KD.png`, `back.png`. Suit codes:
+  C = Clubs, D = Diamonds, H = Hearts, S = Spades; ranks use A, 2..10, J, Q, K.
+
+  Source: the public-domain playing-card deck from Wikimedia Commons
+  "Public domain playing cards"
+  (https://commons.wikimedia.org/wiki/Category:Public_domain_playing_cards),
+  obtained via the GitHub mirror hayeah/playing-cards-assets
+  (https://github.com/hayeah/playing-cards-assets), then renamed to the
+  rank+suit-code scheme above. Public domain; no attribution required, cited
+  here for provenance.
+
+  These sprites are not strictly required: if the `cards/` files are absent the
+  GUI falls back to drawing cards procedurally (rank + suit letter on a card
+  shape), so the game remains playable.
