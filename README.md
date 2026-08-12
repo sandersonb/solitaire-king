@@ -8,7 +8,7 @@ the browser, and a brute-force + heuristic + transposition-table solver.
 
 The GUI is deployed to GitHub Pages on every push to `main`:
 
-**https://sandersonb.github.io/solitairetwo/**
+**https://sandersonb.github.io/solitaire-king/**
 
 _(Update this link to your actual GitHub Pages URL once Pages is enabled for the
 repo under Settings → Pages → "GitHub Actions".)_

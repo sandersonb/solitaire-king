@@ -29,6 +29,7 @@ jobs:
         run: |
           mkdir -p dist
           cp web/index.html dist/
+          cp web/mq_js_bundle.js dist/
           cp target/wasm32-unknown-unknown/release/klondike-gui.wasm dist/
           # The GUI calls set_pc_assets_folder("assets"), which prefixes every
           # load with "assets/" on the web target too — so serve them there.
