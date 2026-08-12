@@ -30,8 +30,9 @@ jobs:
           mkdir -p dist
           cp web/index.html dist/
           cp target/wasm32-unknown-unknown/release/klondike-gui.wasm dist/
-          # Assets are served relative to the page (king-logo.png, cards/...).
-          cp -r assets/. dist/
+          # The GUI calls set_pc_assets_folder("assets"), which prefixes every
+          # load with "assets/" on the web target too — so serve them there.
+          cp -r assets dist/assets
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
