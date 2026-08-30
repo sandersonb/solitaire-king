@@ -3,16 +3,38 @@
 
 use macroquad::prelude::*;
 
+use crate::anim::Animator;
 use crate::assets::Assets;
-use crate::input::Source;
-use crate::layout::{Layout, NUM_TABLEAU};
+use crate::input::{Drag, Pile, Source};
+use crate::layout::{ButtonId, Layout, NUM_TABLEAU};
 use crate::session::Session;
+use crate::solver::Status;
 use klondike::{Card, Color as CardColor, Suit};
 
 const CREAM: Color = Color::new(0.97, 0.96, 0.90, 1.0);
 const TABLE: Color = Color::new(0.10, 0.45, 0.22, 1.0);
 const BACK_BLUE: Color = Color::new(0.15, 0.25, 0.55, 1.0);
 const HILITE: Color = Color::new(1.0, 0.9, 0.2, 1.0);
+
+/// Draw text with the bundled font when present, else the built-in font.
+fn text(font: Option<&Font>, s: &str, x: f32, y: f32, size: f32, color: Color) {
+    draw_text_ex(
+        s,
+        x,
+        y,
+        TextParams {
+            font,
+            font_size: size.round().max(1.0) as u16,
+            color,
+            ..Default::default()
+        },
+    );
+}
+
+/// Measure text with the same font the renderer draws with, for centering.
+fn measure(font: Option<&Font>, s: &str, size: f32) -> TextDimensions {
+    measure_text(s, font, size.round().max(1.0) as u16, 1.0)
+}
 
 fn suit_letter(suit: Suit) -> &'static str {
     match suit {
@@ -78,14 +100,15 @@ fn draw_back(assets: &Assets, r: Rect) {
     }
 }
 
-/// Draw one card (face-up or face-down) into `r`.
-fn draw_card(assets: &Assets, r: Rect, card: Card) {
+/// Draw one card (face-up or face-down) into `r`. `mobile` prefers the
+/// higher-legibility mobile card set when it is present.
+fn draw_card(assets: &Assets, r: Rect, card: Card, mobile: bool) {
     if !card.face_up {
         draw_back(assets, r);
         return;
     }
     card_frame(r);
-    if let Some(tex) = assets.cards.get(&(card.rank, card.suit)) {
+    if let Some(tex) = assets.face(card.rank, card.suit, mobile) {
         draw_texture_ex(tex, r.x, r.y, WHITE, tex_params(r.w, r.h));
         return;
     }
@@ -93,9 +116,17 @@ fn draw_card(assets: &Assets, r: Rect, card: Card) {
     let color = suit_color(card);
     let fs = (r.h * 0.28).round();
     let label = format!("{}{}", card.rank.label(), suit_letter(card.suit));
-    draw_text(&label, r.x + r.w * 0.08, r.y + fs, fs, color);
+    text(
+        assets.font.as_ref(),
+        &label,
+        r.x + r.w * 0.08,
+        r.y + fs,
+        fs,
+        color,
+    );
     let big = (r.h * 0.5).round();
-    draw_text(
+    text(
+        assets.font.as_ref(),
         suit_letter(card.suit),
         r.x + r.w * 0.30,
         r.y + r.h * 0.72,
@@ -104,8 +135,13 @@ fn draw_card(assets: &Assets, r: Rect, card: Card) {
     );
 }
 
-fn draw_highlight(r: Rect) {
-    draw_rectangle_lines(r.x - 2.0, r.y - 2.0, r.w + 4.0, r.h + 4.0, 4.0, HILITE);
+/// Draw a downward-fanned run of cards starting at top-left `at`.
+fn draw_run(assets: &Assets, at: Vec2, cards: &[Card], card_w: f32, fan_dy: f32, mobile: bool) {
+    let card_h = card_w * 1.4;
+    for (i, card) in cards.iter().enumerate() {
+        let r = Rect::new(at.x, at.y + i as f32 * fan_dy, card_w, card_h);
+        draw_card(assets, r, *card, mobile);
+    }
 }
 
 /// Draw the splash screen: logo, title, version, build date, author.
@@ -114,9 +150,10 @@ pub fn splash(assets: &Assets) {
     let sw = screen_width();
     let sh = screen_height();
 
-    let center = |text: &str, y: f32, fs: f32, color: Color| {
-        let dims = measure_text(text, None, fs as u16, 1.0);
-        draw_text(text, sw / 2.0 - dims.width / 2.0, y, fs, color);
+    let font = assets.font.as_ref();
+    let center = |s: &str, y: f32, fs: f32, color: Color| {
+        let dims = measure(font, s, fs);
+        text(font, s, sw / 2.0 - dims.width / 2.0, y, fs, color);
     };
 
     // A modest logo up top; text flows below it (never overlaps).
@@ -160,15 +197,31 @@ fn fmt_time(secs: u64) -> String {
     format!("{:02}:{:02}", secs / 60, secs % 60)
 }
 
-/// Draw the full board for the current session.
-pub fn board(session: &Session, assets: &Assets, layout: &Layout, selection: Option<Source>) {
+/// Draw the full board for the current session. `drag` is the card/run being
+/// carried by the pointer (its source cards are hidden and drawn on top);
+/// `anim` holds in-flight snap animations (whose destination cards are hidden
+/// in the static board until they land).
+pub fn board(
+    session: &Session,
+    assets: &Assets,
+    layout: &Layout,
+    drag: Option<&Drag>,
+    anim: &Animator,
+) {
     clear_background(TABLE);
     let state = &session.state;
+    let mobile = layout.mobile;
+
+    // How many top cards of a pile to hide: those flying in (animations) plus,
+    // for the drag source, the run being carried.
+    let drag_src = drag.map(|d| d.source);
+    let hidden = |pile: Pile, drag_hides: usize| anim.suppressed(pile) + drag_hides;
 
     // Stock: a face-down back when it has cards, else a recycle placeholder.
     if state.stock.is_empty() {
         draw_placeholder(layout.stock);
-        draw_text(
+        text(
+            assets.font.as_ref(),
             "R",
             layout.stock.x + layout.stock.w * 0.35,
             layout.stock.y + layout.stock.h * 0.62,
@@ -189,70 +242,311 @@ pub fn board(session: &Session, assets: &Assets, layout: &Layout, selection: Opt
             layout.waste.h,
         )
     };
+    // Keep the fan anchored to the full pile while a card is lifted off the top
+    // (dragged or animating): hide the top card(s) in place rather than shifting
+    // the window, so the cards beneath don't shuffle and reveal a new one.
+    let waste_drag = usize::from(drag_src == Some(Source::Waste));
+    let hide_top = waste_drag + anim.suppressed(Pile::Waste);
     if waste.is_empty() {
         draw_placeholder(layout.waste);
     } else {
         let shown = waste.len().min(3);
+        let mut drawn = 0;
         for (i, card) in waste[waste.len() - shown..].iter().enumerate() {
-            draw_card(assets, waste_rect(i), *card);
+            // Top card is at i == shown - 1; skip the top `hide_top` of them.
+            if i + hide_top >= shown {
+                continue;
+            }
+            draw_card(assets, waste_rect(i), *card, mobile);
+            drawn += 1;
         }
-        // Highlight the top card (the one that actually moves), not the base.
-        if selection == Some(Source::Waste) {
-            draw_highlight(waste_rect(shown - 1));
+        if drawn == 0 {
+            draw_placeholder(layout.waste);
         }
     }
 
     // Foundations.
     for (i, r) in layout.foundations.iter().enumerate() {
-        match state.foundations[i].top() {
-            Some(card) => draw_card(assets, *r, card),
+        let cards = state.foundations[i].cards();
+        let drag_here = usize::from(drag_src == Some(Source::Foundation(i)));
+        let visible = cards
+            .len()
+            .saturating_sub(hidden(Pile::Foundation(i), drag_here));
+        match visible.checked_sub(1).and_then(|idx| cards.get(idx)) {
+            Some(card) => draw_card(assets, *r, *card, mobile),
             None => draw_placeholder(*r),
-        }
-        if selection == Some(Source::Foundation(i)) {
-            draw_highlight(*r);
         }
     }
 
     // Tableau columns.
     for col in 0..NUM_TABLEAU {
         let cards = state.tableau[col].cards();
-        if cards.is_empty() {
+        let drag_here = match drag_src {
+            Some(Source::TableauRun { col: sc, index }) if sc == col => cards.len() - index,
+            _ => 0,
+        };
+        let visible = cards
+            .len()
+            .saturating_sub(hidden(Pile::Tableau(col), drag_here));
+        if visible == 0 {
             draw_placeholder(layout.tableau[col]);
             continue;
         }
-        for (index, card) in cards.iter().enumerate() {
-            draw_card(assets, layout.tableau_card_rect(col, index), *card);
-        }
-        if let Some(Source::TableauRun { col: sc, index }) = selection {
-            if sc == col {
-                for i in index..cards.len() {
-                    draw_highlight(layout.tableau_card_rect(col, i));
-                }
-            }
+        for (index, card) in cards[..visible].iter().enumerate() {
+            draw_card(assets, layout.tableau_card_rect(col, index), *card, mobile);
         }
     }
 
-    draw_status(session);
+    // In-flight snap animations, on top of the board.
+    let now = get_time();
+    for a in &anim.anims {
+        draw_run(assets, a.pos(now), &a.cards, a.card_w, a.fan_dy, mobile);
+    }
+
+    // The dragged run follows the pointer, lifted + enlarged on touch so a
+    // finger doesn't occlude it.
+    if let Some(d) = drag {
+        let scale = if mobile { 1.15 } else { 1.0 };
+        let cw = layout.card_w * scale;
+        let lift = if mobile { layout.card_w * 0.9 } else { 0.0 };
+        let tl = d.top_left();
+        draw_run(
+            assets,
+            vec2(tl.x, tl.y - lift),
+            &d.cards,
+            cw,
+            layout.fan_dy * scale,
+            mobile,
+        );
+    }
+
+    draw_control_bar(assets, layout);
+    draw_status(session, assets);
 
     if session.is_won() {
         draw_win_banner(session, assets);
     }
 }
 
-fn draw_status(session: &Session) {
+const BTN_BG: Color = Color::new(0.08, 0.30, 0.16, 1.0);
+const BTN_EDGE: Color = Color::new(0.85, 0.90, 0.82, 1.0);
+
+/// Draw the on-screen control bar (Undo / New buttons), highlighting the one
+/// currently pressed.
+fn draw_control_bar(assets: &Assets, layout: &Layout) {
+    let font = assets.font.as_ref();
+    // A subtle strip separating the controls from the board.
+    draw_rectangle(
+        layout.bar.x,
+        layout.bar.y,
+        layout.bar.w,
+        layout.bar.h,
+        Color::new(0.06, 0.24, 0.13, 1.0),
+    );
+    let (px, py) = mouse_position();
+    for (id, r) in &layout.buttons {
+        let pressed = is_mouse_button_down(MouseButton::Left)
+            && px >= r.x
+            && px <= r.x + r.w
+            && py >= r.y
+            && py <= r.y + r.h;
+        let bg = if pressed {
+            Color::new(0.14, 0.45, 0.24, 1.0)
+        } else {
+            BTN_BG
+        };
+        round_rect(*r, r.h * 0.22, bg);
+        draw_rectangle_lines(r.x, r.y, r.w, r.h, 2.0, BTN_EDGE);
+        let label = match id {
+            ButtonId::Undo => "Undo",
+            ButtonId::New => "New",
+        };
+        let fs = (r.h * 0.5).round();
+        let dims = measure(font, label, fs);
+        text(
+            font,
+            label,
+            r.x + (r.w - dims.width) / 2.0,
+            r.y + (r.h + dims.height) / 2.0,
+            fs,
+            CREAM,
+        );
+    }
+}
+
+/// A choice offered by the unwinnable dialog.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DialogChoice {
+    Continue,
+    NewGame,
+}
+
+/// Draw the solvability indicator badge at the left of the control bar, with a
+/// distinct visual per status. Drawn as vector shapes so it needs no special
+/// font glyph coverage.
+pub fn solver_indicator(assets: &Assets, layout: &Layout, status: Status) {
+    let s = layout.bar.h * 0.66;
+    let pad = (layout.bar.h - s) / 2.0;
+    let r = Rect::new(layout.bar.x + pad + s * 0.2, layout.bar.y + pad, s, s);
+    let cx = r.x + r.w / 2.0;
+    let cy = r.y + r.h / 2.0;
+
+    let green = Color::new(0.20, 0.65, 0.30, 1.0);
+    let red = Color::new(0.80, 0.20, 0.20, 1.0);
+    let blue = Color::new(0.25, 0.45, 0.75, 1.0);
+    let gray = Color::new(0.45, 0.48, 0.45, 1.0);
+    let bg = match status {
+        Status::Solvable => green,
+        Status::Unwinnable => red,
+        Status::Checking => blue,
+        Status::Unknown | Status::Inconclusive => gray,
+    };
+    round_rect(r, s * 0.22, bg);
+
+    let lw = (s * 0.09).max(2.0);
+    match status {
+        Status::Solvable => {
+            // Check mark.
+            draw_line(
+                cx - s * 0.22,
+                cy + s * 0.02,
+                cx - s * 0.05,
+                cy + s * 0.20,
+                lw,
+                WHITE,
+            );
+            draw_line(
+                cx - s * 0.05,
+                cy + s * 0.20,
+                cx + s * 0.25,
+                cy - s * 0.22,
+                lw,
+                WHITE,
+            );
+        }
+        Status::Unwinnable => {
+            // Cross.
+            let d = s * 0.22;
+            draw_line(cx - d, cy - d, cx + d, cy + d, lw, WHITE);
+            draw_line(cx - d, cy + d, cx + d, cy - d, lw, WHITE);
+        }
+        Status::Checking => {
+            // Spinner: a rotating arc of ticks.
+            let t = get_time();
+            for i in 0..8 {
+                let a = i as f32 * std::f32::consts::TAU / 8.0 + t as f32 * 4.0;
+                let alpha = 0.25 + 0.75 * (i as f32 / 7.0);
+                let (sx, sy) = (cx + a.cos() * s * 0.16, cy + a.sin() * s * 0.16);
+                let (ex, ey) = (cx + a.cos() * s * 0.30, cy + a.sin() * s * 0.30);
+                draw_line(sx, sy, ex, ey, lw, Color::new(1.0, 1.0, 1.0, alpha));
+            }
+        }
+        Status::Unknown | Status::Inconclusive => {
+            let fs = s * 0.7;
+            let dims = measure(assets.font.as_ref(), "?", fs);
+            text(
+                assets.font.as_ref(),
+                "?",
+                cx - dims.width / 2.0,
+                cy + dims.height / 2.0,
+                fs,
+                WHITE,
+            );
+        }
+    }
+}
+
+/// The Continue / New game button rects for the unwinnable dialog.
+pub fn dialog_button_rects() -> [(DialogChoice, Rect); 2] {
+    let (sw, sh) = (screen_width(), screen_height());
+    let pw = (sw * 0.6).clamp(280.0, 520.0);
+    let ph = (sh * 0.32).clamp(160.0, 260.0);
+    let px = (sw - pw) / 2.0;
+    let py = (sh - ph) / 2.0;
+    let bw = pw * 0.40;
+    let bh = ph * 0.24;
+    let by = py + ph - bh - ph * 0.12;
+    let gap = pw * 0.06;
+    let total = bw * 2.0 + gap;
+    let bx = px + (pw - total) / 2.0;
+    [
+        (DialogChoice::Continue, Rect::new(bx, by, bw, bh)),
+        (DialogChoice::NewGame, Rect::new(bx + bw + gap, by, bw, bh)),
+    ]
+}
+
+/// Draw the modal "this deal can't be won" dialog with its two buttons.
+pub fn unwinnable_dialog(assets: &Assets) {
+    let font = assets.font.as_ref();
+    let (sw, sh) = (screen_width(), screen_height());
+    draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.0, 0.0, 0.0, 0.55));
+
+    let pw = (sw * 0.6).clamp(280.0, 520.0);
+    let ph = (sh * 0.32).clamp(160.0, 260.0);
+    let panel = Rect::new((sw - pw) / 2.0, (sh - ph) / 2.0, pw, ph);
+    round_rect(panel, 16.0, Color::new(0.12, 0.16, 0.13, 1.0));
+    draw_rectangle_lines(panel.x, panel.y, panel.w, panel.h, 2.0, BTN_EDGE);
+
+    let center = |s: &str, y: f32, fs: f32, color: Color| {
+        let dims = measure(font, s, fs);
+        text(font, s, sw / 2.0 - dims.width / 2.0, y, fs, color);
+    };
+    center(
+        "No moves can win this deal.",
+        panel.y + ph * 0.30,
+        28.0,
+        CREAM,
+    );
+    center(
+        "Keep playing, or deal a new game?",
+        panel.y + ph * 0.46,
+        20.0,
+        CREAM,
+    );
+
+    let (px, py) = mouse_position();
+    for (choice, r) in dialog_button_rects() {
+        let hot = px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+        let bg = if hot && is_mouse_button_down(MouseButton::Left) {
+            Color::new(0.14, 0.45, 0.24, 1.0)
+        } else {
+            BTN_BG
+        };
+        round_rect(r, r.h * 0.22, bg);
+        draw_rectangle_lines(r.x, r.y, r.w, r.h, 2.0, BTN_EDGE);
+        let label = match choice {
+            DialogChoice::Continue => "Continue",
+            DialogChoice::NewGame => "New game",
+        };
+        let fs = (r.h * 0.42).round();
+        let dims = measure(font, label, fs);
+        text(
+            font,
+            label,
+            r.x + (r.w - dims.width) / 2.0,
+            r.y + (r.h + dims.height) / 2.0,
+            fs,
+            CREAM,
+        );
+    }
+}
+
+fn draw_status(session: &Session, assets: &Assets) {
+    let font = assets.font.as_ref();
     let line = format!(
         "seed {}    moves {}    score {}    time {}",
-        session.seed(),
+        klondike::seed::encode(session.seed()),
         session.move_count(),
         session.score(),
         fmt_time(session.elapsed_secs()),
     );
-    draw_text(&line, 12.0, 24.0, 24.0, CREAM);
+    text(font, &line, 12.0, 24.0, 24.0, CREAM);
     if let Some(msg) = session.message() {
-        draw_text(msg, 12.0, screen_height() - 30.0, 22.0, HILITE);
+        text(font, msg, 12.0, screen_height() - 30.0, 22.0, HILITE);
     }
-    draw_text(
-        "click select+move · dbl-click/Enter auto · U undo · R redo · N new",
+    text(
+        font,
+        "drag to move · dbl-click/Enter auto · U undo · R redo · N new",
         12.0,
         screen_height() - 8.0,
         18.0,
@@ -275,9 +569,10 @@ fn draw_win_banner(session: &Session, assets: &Assets) {
             tex_params(lw, lh),
         );
     }
-    let center = |text: &str, y: f32, fs: f32, color: Color| {
-        let dims = measure_text(text, None, fs as u16, 1.0);
-        draw_text(text, sw / 2.0 - dims.width / 2.0, y, fs, color);
+    let font = assets.font.as_ref();
+    let center = |s: &str, y: f32, fs: f32, color: Color| {
+        let dims = measure(font, s, fs);
+        text(font, s, sw / 2.0 - dims.width / 2.0, y, fs, color);
     };
     center("You win!", sh * 0.52, 56.0, HILITE);
     center(

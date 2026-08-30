@@ -41,7 +41,7 @@ pub fn render<W: Write>(w: &mut W, s: &Session) -> io::Result<()> {
             w,
             Print(format!(
                 "seed {}   moves {}   score {}   time {}",
-                s.seed(),
+                klondike::seed::encode(s.seed()),
                 s.move_count(),
                 score,
                 fmt_time(s.elapsed_secs()),

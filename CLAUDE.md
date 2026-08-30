@@ -27,3 +27,15 @@ The GUI calls `set_pc_assets_folder("assets")`, which prefixes every asset load
 with `assets/` **on the web target too** (despite the "pc" in the name). The
 deploy workflow therefore serves assets under `dist/assets/`, not the site root.
 Keep those in sync if either the folder call or the workflow's copy step changes.
+
+Runtime asset dirs loaded by the GUI (all under `assets/`):
+- `cards/` — desktop card sprites + `back.png` (with a procedural fallback).
+- `cards-mobile/` — larger-index card set, preferred on touch/narrow viewports;
+  falls back to `cards/` then procedural. Generated from `cards-svg/` — see below.
+- `fonts/ui.ttf` — Atkinson Hyperlegible, used for all GUI text (built-in font
+  fallback if absent). `fonts/OFL.txt` is its license.
+
+Build-time only (NOT loaded at runtime, and pruned from `dist/` by the deploy
+workflow): `assets/cards-svg/` — the vector source deck. Regenerate the mobile
+set with `python3 tools/build_mobile_cards.py` (deps in `tools/requirements.txt`;
+`cairosvg` needs the system `cairo` lib).

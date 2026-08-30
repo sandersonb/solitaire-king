@@ -8,4 +8,5 @@ pub mod pile;
 pub mod rng;
 pub mod rules;
 pub mod score;
+pub mod seed;
 pub mod state;

@@ -31,10 +31,12 @@ pub use model::score::{
     Score, ScoreEvent, SCORE_FLIP_TABLEAU, SCORE_FOUNDATION_TO_TABLEAU,
     SCORE_TABLEAU_TO_FOUNDATION, SCORE_WASTE_TO_FOUNDATION, SCORE_WASTE_TO_TABLEAU,
 };
+pub use model::seed;
 pub use model::state::{DrawMode, GameConfig, GameState};
 pub use solver::{
-    solve, solve_state, validate_empty_column_symmetry, validate_equivalence,
-    validate_key_strategy, validate_move_ordering, validate_no_op, validate_safe_automoves,
-    validate_transposition_table, zobrist, KeyStrategy, SolveBudget, SolveOptions, SolveResult,
-    ValidationOutcome, Verdict, DEFAULT_MAX_TABLE_ENTRIES,
+    encode, solve, solve_reusing, solve_state, validate_empty_column_symmetry,
+    validate_equivalence, validate_key_strategy, validate_move_ordering, validate_no_op,
+    validate_safe_automoves, validate_transposition_table, zobrist, ClosedTable, KeyStrategy,
+    PositionKey, SolveBudget, SolveOptions, SolveResult, ValidationOutcome, Verdict,
+    DEFAULT_MAX_TABLE_ENTRIES,
 };

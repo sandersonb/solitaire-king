@@ -33,11 +33,11 @@ The CLI SHALL use UTF-8 suit symbols (♠ ♥ ♦ ♣) and ANSI color to aid rea
 - **THEN** the face-down cards are visually distinct (dimmed or a concealed glyph)
 
 ### Requirement: Status line
-The CLI SHALL display a status area showing the current seed, the number of moves made, the current score, and the elapsed play time.
+The CLI SHALL display a status area showing the current seed (as the pronounceable seed string), the number of moves made, the current score, and the elapsed play time.
 
 #### Scenario: Status shows game metrics
 - **WHEN** the board is rendered
-- **THEN** the seed, move count, score, and elapsed time are all visible
+- **THEN** the seed (as the pronounceable seed string), move count, score, and elapsed time are all visible
 
 ### Requirement: Pile alignment
 Each pile's cell SHALL render in the same terminal column as its key header, so that the stock, waste, and the four foundations line up exactly beneath their `[8] [9] [0] [-]` labels and the tableau columns line up beneath `[1]`–`[7]`, regardless of how many waste cards are shown.

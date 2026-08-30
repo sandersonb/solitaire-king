@@ -95,7 +95,8 @@ pub fn format_report(seed: u64, config: GameConfig, result: &SolveResult) -> Str
 
     let mut out = String::new();
     out.push_str(&format!(
-        "Klondike solver — seed {seed}  (draw {draw}, redeal {redeal})\n"
+        "Klondike solver — seed {}  (draw {draw}, redeal {redeal})\n",
+        klondike::seed::encode(seed)
     ));
     out.push_str(&format!("result: {verdict}\n"));
     out.push_str(&format!("nodes expanded: {}\n", result.nodes_expanded));
@@ -209,7 +210,7 @@ mod tests {
     #[test]
     fn report_solved_lists_moves_and_stats() {
         let text = format_report(42, GameConfig::default(), &sample_result(Verdict::Solvable));
-        assert!(text.contains("seed 42"));
+        assert!(text.contains(&format!("seed {}", klondike::seed::encode(42))));
         assert!(text.contains("result: SOLVABLE"));
         assert!(text.contains("winning moves: 1"));
         assert!(text.contains("forced auto-moves: 4"));

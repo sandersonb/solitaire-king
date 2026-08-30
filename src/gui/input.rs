@@ -1,16 +1,17 @@
-//! Mouse hit-testing and (pure) move resolution over the model.
+//! Pointer input (mouse + touch), hit-testing, drag state, and (pure) move
+//! resolution over the model.
 
-use macroquad::prelude::Rect;
+use macroquad::prelude::*;
 
 use crate::layout::{Layout, NUM_TABLEAU};
-use klondike::{legal_moves, GameState, Move};
+use klondike::{legal_moves, Card, GameState, Move};
 
-/// A destination pile a move can target.
+/// A destination pile a move can target (also used as a suppression key while a
+/// card animates into or back out of a pile).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pile {
     Tableau(usize),
     Foundation(usize),
-    Stock,
     Waste,
 }
 
@@ -44,6 +45,97 @@ pub enum Hit {
 
 fn contains(r: Rect, x: f32, y: f32) -> bool {
     x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h
+}
+
+/// A unified pointer sampled from touch (preferred) or the mouse, so the drag
+/// logic is input-source agnostic and a touch tap isn't handled twice on web.
+#[derive(Clone, Copy, Default)]
+pub struct Pointer {
+    pub x: f32,
+    pub y: f32,
+    /// Went down this frame.
+    pub pressed: bool,
+    /// Released this frame.
+    pub released: bool,
+}
+
+/// Read the current pointer, preferring an active touch over the mouse.
+pub fn read_pointer() -> Pointer {
+    if let Some(t) = touches().into_iter().next() {
+        let (pressed, released) = match t.phase {
+            TouchPhase::Started => (true, false),
+            TouchPhase::Moved | TouchPhase::Stationary => (false, false),
+            TouchPhase::Ended | TouchPhase::Cancelled => (false, true),
+        };
+        Pointer {
+            x: t.position.x,
+            y: t.position.y,
+            pressed,
+            released,
+        }
+    } else {
+        let (x, y) = mouse_position();
+        Pointer {
+            x,
+            y,
+            pressed: is_mouse_button_pressed(MouseButton::Left),
+            released: is_mouse_button_released(MouseButton::Left),
+        }
+    }
+}
+
+/// A card (or run) currently being dragged by the pointer.
+pub struct Drag {
+    pub source: Source,
+    /// The face-up run being carried, bottom-first (for drawing).
+    pub cards: Vec<Card>,
+    /// Offset from the grabbed card's top-left to the pointer, so it tracks 1:1.
+    pub grab_dx: f32,
+    pub grab_dy: f32,
+    pub pos: Vec2,
+    /// Original top-left of the grabbed (bottom) card, for a return animation.
+    pub origin: Vec2,
+}
+
+impl Drag {
+    /// Current top-left of the grabbed (bottom) card.
+    pub fn top_left(&self) -> Vec2 {
+        vec2(self.pos.x - self.grab_dx, self.pos.y - self.grab_dy)
+    }
+}
+
+/// The drop zone (destination pile) nearest to point `(x, y)`, if one is within
+/// reach. Zones are the foundation and tableau rects padded generously, so a
+/// release need not land exactly on the pile.
+pub fn nearest_pile(state: &GameState, layout: &Layout, x: f32, y: f32) -> Option<Pile> {
+    let pad = layout.card_w * 0.5;
+    let card_h = layout.card_w * 1.4;
+    let mut best: Option<(Pile, f32)> = None;
+    let mut consider = |pile: Pile, r: Rect| {
+        let expanded = Rect::new(r.x - pad, r.y - pad, r.w + 2.0 * pad, r.h + 2.0 * pad);
+        if contains(expanded, x, y) {
+            let cx = r.x + r.w / 2.0;
+            let cy = r.y + r.h / 2.0;
+            let d = (x - cx).powi(2) + (y - cy).powi(2);
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((pile, d));
+            }
+        }
+    };
+    for (i, r) in layout.foundations.iter().enumerate() {
+        consider(Pile::Foundation(i), *r);
+    }
+    for col in 0..NUM_TABLEAU {
+        let len = state.tableau[col].len();
+        let base = layout.tableau[col];
+        let h = if len <= 1 {
+            card_h
+        } else {
+            card_h + layout.fan_dy * (len as f32 - 1.0)
+        };
+        consider(Pile::Tableau(col), Rect::new(base.x, base.y, base.w, h));
+    }
+    best.map(|(p, _)| p)
 }
 
 /// Determine what pile/card the point `(x, y)` is over.
@@ -97,14 +189,17 @@ pub fn source_of(state: &GameState, hit: Hit) -> Option<Source> {
     }
 }
 
-/// The destination pile a hit targets, if any.
-pub fn pile_of(hit: Hit) -> Option<Pile> {
-    match hit {
-        Hit::Foundation(i) => Some(Pile::Foundation(i)),
-        Hit::TableauCard { col, .. } | Hit::TableauEmpty(col) => Some(Pile::Tableau(col)),
-        Hit::Stock => Some(Pile::Stock),
-        Hit::Waste => Some(Pile::Waste),
-        Hit::None => None,
+/// The destination pile and number of cards a move delivers, for animating it
+/// into place and hiding the resting cards until they land. `Draw`/`Recycle`
+/// have no card destination and return `None`.
+pub fn move_dest(mv: &Move) -> Option<(Pile, usize)> {
+    match *mv {
+        Move::WasteToFoundation { foundation } => Some((Pile::Foundation(foundation), 1)),
+        Move::TableauToFoundation { foundation, .. } => Some((Pile::Foundation(foundation), 1)),
+        Move::WasteToTableau { column } => Some((Pile::Tableau(column), 1)),
+        Move::FoundationToTableau { column, .. } => Some((Pile::Tableau(column), 1)),
+        Move::TableauToTableau { to, count, .. } => Some((Pile::Tableau(to), count)),
+        Move::Draw | Move::Recycle => None,
     }
 }
 

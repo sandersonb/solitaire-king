@@ -23,9 +23,10 @@ struct Args {
     #[arg(long, default_value_t = true, help_heading = "Game")]
     cli: bool,
 
-    /// Deal seed; a random seed is used when omitted.
+    /// Deal seed as a memorable proquint string (e.g. lusab-babad-gutih-tugad) or
+    /// a raw u64; a random seed is used when omitted.
     #[arg(short, long, help_heading = "Game")]
-    seed: Option<u64>,
+    seed: Option<String>,
 
     /// Cards turned per stock draw: 1 or 3.
     #[arg(long, default_value_t = 3, help_heading = "Game")]
@@ -120,7 +121,19 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let seed = args.seed.unwrap_or_else(random_seed);
+    let seed = match args.seed {
+        Some(ref s) => match klondike::seed::decode(s) {
+            Some(v) => v,
+            None => {
+                eprintln!(
+                    "error: --seed must be a proquint string or a u64 (got {s:?})\n\n\
+                     Run with --help for usage."
+                );
+                std::process::exit(2);
+            }
+        },
+        None => random_seed(),
+    };
 
     // Solver mode: run the brute-force solver and print a report, no terminal.
     if args.solve {
@@ -205,7 +218,7 @@ fn translate(code: KeyCode) -> Option<cli::session::KeyInput> {
 /// after the terminal has been restored.
 fn print_summary(session: &mut Session) {
     println!("Klondike session over.");
-    println!("  seed:  {}", session.seed());
+    println!("  seed:  {}", klondike::seed::encode(session.seed()));
     println!("  moves: {}", session.move_count());
     if session.is_won() {
         println!("  result: WON — final score {}", session.final_score());
@@ -276,8 +289,17 @@ mod tests {
     #[test]
     fn args_parse_smoke() {
         let a = Args::parse_from(["klondike", "--seed", "42", "--draw", "1", "--timed"]);
-        assert_eq!(a.seed, Some(42));
+        assert_eq!(a.seed.as_deref(), Some("42"));
+        assert_eq!(klondike::seed::decode(a.seed.as_deref().unwrap()), Some(42));
         assert_eq!(a.draw, 1);
         assert!(a.timed);
+
+        // A proquint seed argument resolves to the same u64 it encodes.
+        let p = klondike::seed::encode(2024);
+        let b = Args::parse_from(["klondike", "--seed", &p]);
+        assert_eq!(
+            klondike::seed::decode(b.seed.as_deref().unwrap()),
+            Some(2024)
+        );
     }
 }

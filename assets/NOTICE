@@ -5,6 +5,12 @@ king-logo.png
   The Klondike splash/logo artwork. Shown on the startup splash and the win
   banner.
 
+fonts/
+  ui.ttf / ui-bold.ttf — Atkinson Hyperlegible, a highly legible open font by the
+  Braille Institute, used for all GUI text (crisp at high DPI). Licensed under the
+  SIL Open Font License 1.1; the full license text is in `fonts/OFL.txt`. The GUI
+  falls back to macroquad's built-in font if these are absent.
+
 cards/
   Card face sprites and a back, named by rank + suit code, e.g. `AS.png`
   (Ace of Spades), `10H.png` (Ten of Hearts), `KD.png`, `back.png`. Suit codes:
@@ -21,3 +27,27 @@ cards/
   These sprites are not strictly required: if the `cards/` files are absent the
   GUI falls back to drawing cards procedurally (rank + suit letter on a card
   shape), so the game remains playable.
+
+cards-svg/
+  The vector source deck, named `RANKSUIT.svg` (e.g. `AS.svg`, `10H.svg`). This
+  is the "Byron Knoll" style public-domain SVG playing-card deck from Wikimedia
+  Commons (https://commons.wikimedia.org/wiki/Category:SVG_playing_cards),
+  renamed to the rank+suit-code scheme. Public domain; cited here for provenance.
+  Used only at build time to generate `cards-mobile/` (below); not loaded at runtime.
+
+cards-mobile/
+  A higher-legibility card set for small/touch screens, using the same
+  rank+suit-code filenames as `cards/`. Each card shows a large rank + suit on
+  one row above a large, centered card body, so the index stays readable when
+  cards are small or only their top strip shows in a tableau fan.
+
+  Generated from the vector `cards-svg/` deck by `tools/build_mobile_cards.py`,
+  which classifies each card's corner rank, corner pip, and body by vector
+  bounding box and recomposes them into the mobile layout, rendering each region
+  from vectors (crisp at any size). Build-time only; see `tools/requirements.txt`
+  for the Python dependencies. Regenerate with:
+
+    python3 tools/build_mobile_cards.py            # assets/cards-svg -> assets/cards-mobile
+
+  Also optional: the GUI prefers this set on mobile and falls back to `cards/`
+  (then to procedural cards) when it is absent.

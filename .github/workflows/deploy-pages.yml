@@ -33,7 +33,12 @@ jobs:
           cp target/wasm32-unknown-unknown/release/klondike-gui.wasm dist/
           # The GUI calls set_pc_assets_folder("assets"), which prefixes every
           # load with "assets/" on the web target too — so serve them there.
+          # This ships the runtime assets: cards/, cards-mobile/, fonts/, and the
+          # logo. The vector card sources (cards-svg/) are build-time only — used
+          # by tools/build_mobile_cards.py to regenerate cards-mobile/ — so drop
+          # them from the deployed bundle.
           cp -r assets dist/assets
+          rm -rf dist/assets/cards-svg
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

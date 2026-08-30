@@ -1,0 +1,6 @@
+# Build-time deps for tools/build_mobile_cards.py (not needed to run the game).
+# cairosvg binds the system cairo library (macOS: `brew install cairo`).
+cairosvg>=2.7
+svgelements>=1.9
+lxml>=5.0
+Pillow>=10.0

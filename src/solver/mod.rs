@@ -20,7 +20,8 @@ use std::time::Duration;
 use crate::{GameConfig, Move};
 
 pub use encode::{encode, PositionKey};
-pub use search::{solve, solve_state};
+pub use search::{solve, solve_reusing, solve_state};
+pub use table::ClosedTable;
 pub use zobrist::zobrist;
 
 /// Limits that bound the (exponential) search. The search stops at the first win

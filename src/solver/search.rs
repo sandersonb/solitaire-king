@@ -11,16 +11,60 @@
 
 use std::collections::HashSet;
 use std::hash::Hash;
-use std::time::Instant;
+use std::time::Duration;
 
 use crate::model::rules::{apply_undoable, legal_moves, undo_move};
 use crate::solver::classify::{apply_equivalence_pruning, column_has_legal_move, no_op_structural};
-use crate::solver::encode::encode;
+use crate::solver::encode::{encode, PositionKey};
 use crate::solver::heuristics::{apply_empty_column_symmetry, move_priority, safe_move_in};
 use crate::solver::table::ClosedTable;
 use crate::solver::zobrist::zobrist;
 use crate::solver::{KeyStrategy, SolveBudget, SolveOptions, SolveResult, Verdict};
 use crate::{GameConfig, GameState, Move};
+
+/// A monotonic clock for the elapsed-time budget. On `wasm32-unknown-unknown`
+/// there is no usable monotonic clock (`std::time::Instant::now()` panics), so
+/// the wasm implementation is a no-op: elapsed is zero and the time deadline is
+/// never reached, leaving the node budget to bound the search.
+#[cfg(not(target_arch = "wasm32"))]
+mod clock {
+    use std::time::{Duration, Instant};
+
+    pub struct Clock(Instant);
+
+    impl Clock {
+        pub fn start() -> Self {
+            Clock(Instant::now())
+        }
+        pub fn elapsed(&self) -> Duration {
+            self.0.elapsed()
+        }
+        pub fn reached(&self, max: Duration) -> bool {
+            self.0.elapsed() >= max
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod clock {
+    use std::time::Duration;
+
+    pub struct Clock;
+
+    impl Clock {
+        pub fn start() -> Self {
+            Clock
+        }
+        pub fn elapsed(&self) -> Duration {
+            Duration::ZERO
+        }
+        pub fn reached(&self, _max: Duration) -> bool {
+            false
+        }
+    }
+}
+
+use clock::Clock;
 
 /// Solve the deal for `seed`/`config` under the given budget and options.
 pub fn solve(
@@ -35,27 +79,70 @@ pub fn solve(
 /// Solve from an explicit starting position — the core entry point. Dispatches
 /// on the key strategy, monomorphizing the generic search for each key type.
 pub fn solve_state(root: &GameState, budget: SolveBudget, options: SolveOptions) -> SolveResult {
+    // The table is built per key type inside each arm, so its `K` matches.
+    let cap = options.max_table_entries;
+    let with_table = options.transposition_table;
     match options.key {
-        KeyStrategy::Zobrist => run(root, budget, options, zobrist),
-        KeyStrategy::ExactBytes => run(root, budget, options, encode),
+        KeyStrategy::Zobrist => {
+            let closed = with_table.then(|| ClosedTable::with_capacity(cap));
+            run(root, budget, options, zobrist, closed).0
+        }
+        KeyStrategy::ExactBytes => {
+            let closed = with_table.then(|| ClosedTable::with_capacity(cap));
+            run(root, budget, options, encode, closed).0
+        }
     }
 }
 
-/// Run the search with a concrete key function `key_of`.
-fn run<K, F>(root: &GameState, budget: SolveBudget, options: SolveOptions, key_of: F) -> SolveResult
+/// Solve from `root` under a node budget, **reusing the caller's transposition
+/// table**. The table is left populated with the proven-winless positions found,
+/// so a later call with the same table (from the same or another reachable
+/// position) skips positions already proven winless — letting repeated bounded
+/// searches make monotonic progress. Keys are exact bytes, so reuse is sound and
+/// a proven-unwinnable verdict cannot be a hash collision. There is no time
+/// budget (the caller bounds wall-clock across calls); the search is bounded by
+/// `node_budget` (`None` = unbounded).
+pub fn solve_reusing(
+    root: &GameState,
+    node_budget: Option<u64>,
+    options: SolveOptions,
+    table: &mut ClosedTable<PositionKey>,
+) -> SolveResult {
+    let budget = SolveBudget {
+        max_nodes: node_budget,
+        max_time: None,
+    };
+    let mut opts = options;
+    opts.key = KeyStrategy::ExactBytes;
+    opts.transposition_table = true;
+    // Borrow the caller's table by swapping it out and back so the search can own
+    // it for the duration of the run.
+    let taken = std::mem::replace(table, ClosedTable::with_capacity(1));
+    let (result, returned) = run(root, budget, opts, encode, Some(taken));
+    *table = returned.expect("reusing search keeps its table");
+    result
+}
+
+/// Run the search with a concrete key function `key_of`, taking the closed table
+/// by value and returning it so it can be reused across calls.
+fn run<K, F>(
+    root: &GameState,
+    budget: SolveBudget,
+    options: SolveOptions,
+    key_of: F,
+    closed: Option<ClosedTable<K>>,
+) -> (SolveResult, Option<ClosedTable<K>>)
 where
     K: Hash + Eq + Clone,
     F: Fn(&GameState) -> K,
 {
-    let start = Instant::now();
-    let closed = options
-        .transposition_table
-        .then(|| ClosedTable::with_capacity(options.max_table_entries));
+    let clock = Clock::start();
 
     let mut search = Search {
         budget,
         options,
-        deadline: budget.max_time.map(|d| start + d),
+        clock,
+        max_time: budget.max_time,
         nodes: 0,
         max_depth: 0,
         path: HashSet::new(),
@@ -90,12 +177,12 @@ where
         .map_or(0, |m| m.len() * std::mem::size_of::<Move>());
     let peak_logical_bytes = (search.peak_positions + table_entries) * key_bytes + moveset_bytes;
 
-    SolveResult {
+    let result = SolveResult {
         solvable: moveset.is_some(),
         moveset,
         nodes_expanded: search.nodes,
         max_depth: search.max_depth,
-        elapsed: start.elapsed(),
+        elapsed: search.clock.elapsed(),
         peak_logical_bytes,
         peak_positions: search.peak_positions,
         forced_automoves: search.forced_automoves,
@@ -104,13 +191,15 @@ where
         table_hits: search.table_hits,
         table_evictions,
         budget_exhausted: search.budget_exhausted,
-    }
+    };
+    (result, search.closed)
 }
 
 struct Search<K, F> {
     budget: SolveBudget,
     options: SolveOptions,
-    deadline: Option<Instant>,
+    clock: Clock,
+    max_time: Option<Duration>,
     nodes: u64,
     max_depth: usize,
     /// On-path ancestors. Never evicted; guarantees termination.
@@ -235,11 +324,100 @@ where
                 return true;
             }
         }
-        if let Some(deadline) = self.deadline {
-            if self.nodes & 0x7FF == 0 && Instant::now() >= deadline {
+        // On wasm `max_time` is honored as "never" (no monotonic clock), so the
+        // node budget alone bounds the search there.
+        if let Some(max) = self.max_time {
+            if self.nodes & 0x7FF == 0 && self.clock.reached(max) {
                 return true;
             }
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::solver::ClosedTable;
+    use crate::{DrawMode, GameConfig};
+
+    fn draw_one() -> GameConfig {
+        GameConfig {
+            draw_mode: DrawMode::One,
+            redeal_limit: None,
+            timed: false,
+        }
+    }
+
+    /// Seed 2 (draw-one) is solvable in well under a thousand nodes — a fast,
+    /// decisive fixture for the reuse/convergence tests.
+    fn solvable_root() -> GameState {
+        GameState::new_with_seed(2, draw_one())
+    }
+
+    #[test]
+    fn node_budget_only_returns_well_formed_result() {
+        // No time budget: exercises the path that never consults a clock (the
+        // only path available on wasm).
+        let mut table = ClosedTable::with_capacity(1 << 20);
+        let r = solve_reusing(
+            &solvable_root(),
+            Some(1_000_000),
+            SolveOptions::default(),
+            &mut table,
+        );
+        assert_eq!(r.verdict, Verdict::Solvable);
+        assert!(r.solvable);
+        assert!(r.moveset.is_some());
+        assert!(r.nodes_expanded > 0);
+    }
+
+    #[test]
+    fn reusing_with_full_budget_matches_one_shot() {
+        let root = solvable_root();
+        let one_shot = solve_state(&root, SolveBudget::default(), SolveOptions::default());
+        let mut table = ClosedTable::with_capacity(1 << 20);
+        let reused = solve_reusing(&root, Some(10_000_000), SolveOptions::default(), &mut table);
+        assert_eq!(reused.verdict, one_shot.verdict);
+    }
+
+    #[test]
+    fn shared_table_is_consulted_across_calls() {
+        // Seed 3 (draw-one) needs hundreds of thousands of nodes, so a small
+        // budget leaves the search inconclusive but fills the table. A second
+        // call sharing that table must re-hit those proven-winless positions.
+        let root = GameState::new_with_seed(3, draw_one());
+        let mut table = ClosedTable::with_capacity(1 << 20);
+        let first = solve_reusing(&root, Some(2_000), SolveOptions::default(), &mut table);
+        assert_eq!(first.verdict, Verdict::Inconclusive);
+        assert!(
+            table.peak_entries() > 0,
+            "first call should record winless positions"
+        );
+        let second = solve_reusing(&root, Some(2_000), SolveOptions::default(), &mut table);
+        assert!(
+            second.table_hits > 0,
+            "second call should consult the shared table"
+        );
+    }
+
+    #[test]
+    fn repeated_small_budgets_converge_to_the_decisive_verdict() {
+        let root = solvable_root();
+        let reference = solve_state(&root, SolveBudget::default(), SolveOptions::default());
+        assert_eq!(reference.verdict, Verdict::Solvable);
+
+        // Drive many tiny node-bounded slices sharing one table, exactly as the
+        // GUI will, and confirm they reach the same decisive verdict.
+        let mut table = ClosedTable::with_capacity(1 << 20);
+        let mut verdict = Verdict::Inconclusive;
+        for _ in 0..5_000 {
+            let r = solve_reusing(&root, Some(200), SolveOptions::default(), &mut table);
+            if r.verdict != Verdict::Inconclusive {
+                verdict = r.verdict;
+                break;
+            }
+        }
+        assert_eq!(verdict, Verdict::Solvable);
     }
 }
