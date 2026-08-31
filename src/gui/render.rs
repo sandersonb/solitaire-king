@@ -321,20 +321,22 @@ pub fn board(
         );
     }
 
-    draw_control_bar(assets, layout);
     draw_status(session, assets, show_seed);
 
+    // The win banner dims the board; the control bar is drawn on top of it so its
+    // buttons (New, Settings) stay visible and usable after a win.
     if session.is_won() {
         draw_win_banner(session, assets);
     }
+    draw_control_bar(assets, layout, session.is_won());
 }
 
 const BTN_BG: Color = Color::new(0.08, 0.30, 0.16, 1.0);
 const BTN_EDGE: Color = Color::new(0.85, 0.90, 0.82, 1.0);
 
-/// Draw the on-screen control bar (Undo / New buttons), highlighting the one
-/// currently pressed.
-fn draw_control_bar(assets: &Assets, layout: &Layout) {
+/// Draw the on-screen control bar, highlighting the pressed control. `undo_off`
+/// dims the Undo/Redo button (undo/redo are disabled after a win).
+fn draw_control_bar(assets: &Assets, layout: &Layout, undo_off: bool) {
     let font = assets.font.as_ref();
     // A subtle strip separating the controls from the board.
     draw_rectangle(
@@ -346,13 +348,17 @@ fn draw_control_bar(assets: &Assets, layout: &Layout) {
     );
     let (px, py) = mouse_position();
     for (id, r) in &layout.buttons {
-        let pressed = is_mouse_button_down(MouseButton::Left)
+        let disabled = *id == ButtonId::UndoRedo && undo_off;
+        let pressed = !disabled
+            && is_mouse_button_down(MouseButton::Left)
             && px >= r.x
             && px <= r.x + r.w
             && py >= r.y
             && py <= r.y + r.h;
         let bg = if pressed {
             Color::new(0.14, 0.45, 0.24, 1.0)
+        } else if disabled {
+            Color::new(0.06, 0.18, 0.10, 1.0)
         } else {
             BTN_BG
         };
@@ -363,6 +369,11 @@ fn draw_control_bar(assets: &Assets, layout: &Layout) {
             ButtonId::New => "New",
             ButtonId::Settings => "Settings",
         };
+        let fg = if disabled {
+            Color::new(1.0, 1.0, 1.0, 0.35)
+        } else {
+            CREAM
+        };
         let fs = (r.h * 0.44).round();
         let dims = measure(font, label, fs);
         text(
@@ -371,7 +382,7 @@ fn draw_control_bar(assets: &Assets, layout: &Layout) {
             r.x + (r.w - dims.width) / 2.0,
             r.y + (r.h + dims.height) / 2.0,
             fs,
-            CREAM,
+            fg,
         );
     }
 }
@@ -802,37 +813,38 @@ fn draw_win_banner(session: &Session, assets: &Assets) {
     let sw = screen_width();
     let sh = screen_height();
     draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.0, 0.0, 0.0, 0.55));
-    if let Some(logo) = &assets.logo {
-        let lw = (sw * 0.16).min(180.0);
-        let lh = lw * (logo.height() / logo.width());
-        draw_texture_ex(
-            logo,
-            sw / 2.0 - lw / 2.0,
-            sh * 0.22,
-            WHITE,
-            tex_params(lw, lh),
-        );
-    }
+
     let font = assets.font.as_ref();
     let center = |s: &str, y: f32, fs: f32, color: Color| {
         let dims = measure(font, s, fs);
         text(font, s, sw / 2.0 - dims.width / 2.0, y, fs, color);
     };
+
+    // Logo up top; text flows strictly below it so nothing overlaps the artwork.
+    let ly = sh * 0.12;
+    let mut y = ly + sh * 0.06;
+    if let Some(logo) = &assets.logo {
+        let lh = (sh * 0.26).min(220.0);
+        let lw = lh * (logo.width() / logo.height());
+        draw_texture_ex(logo, sw / 2.0 - lw / 2.0, ly, WHITE, tex_params(lw, lh));
+        y = ly + lh + sh * 0.06;
+    }
+
     if session.was_auto_solved() {
-        center("Auto-solved", sh * 0.52, 56.0, HILITE);
-        center("(not a scored win)", sh * 0.60, 24.0, CREAM);
+        center("Auto-solved", y, 52.0, HILITE);
+        center("(not a scored win)", y + sh * 0.08, 24.0, CREAM);
     } else {
-        center("You win!", sh * 0.52, 56.0, HILITE);
+        center("You win!", y, 52.0, HILITE);
         center(
             &format!(
                 "final score {}   in {}",
                 session.final_score(),
                 fmt_time(session.elapsed_secs())
             ),
-            sh * 0.60,
+            y + sh * 0.08,
             28.0,
             CREAM,
         );
     }
-    center("New game to play again", sh * 0.68, 22.0, CREAM);
+    center("New game to play again", y + sh * 0.16, 22.0, CREAM);
 }

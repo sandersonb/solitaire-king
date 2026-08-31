@@ -263,7 +263,12 @@ async fn main() {
                     &anim,
                     settings.show_seed,
                 );
-                render::solver_indicator(&assets, &layout, assist.status(), !assist.enabled());
+                render::solver_indicator(
+                    &assets,
+                    &layout,
+                    assist.status(),
+                    !assist.enabled() || session.is_won(),
+                );
                 if assist.dialog_open() {
                     render::unwinnable_dialog(&assets);
                 } else if overlay == Overlay::Solver {
@@ -417,11 +422,12 @@ fn handle_input(
         new_game(session, anim, game_start, settings.game_config(cfg));
         *drag = None;
     }
-    if is_key_pressed(KeyCode::U) {
+    // Undo/redo are disabled once the game is won.
+    if is_key_pressed(KeyCode::U) && !session.is_won() {
         session.undo();
         *drag = None;
     }
-    if is_key_pressed(KeyCode::R) {
+    if is_key_pressed(KeyCode::R) && !session.is_won() {
         session.redo();
         *drag = None;
     }
@@ -440,8 +446,8 @@ fn handle_input(
         return;
     }
 
-    // Undo/Redo button: tap = undo, press-and-hold = one redo.
-    let over_undo = layout.button_at(ptr.x, ptr.y) == Some(ButtonId::UndoRedo);
+    // Undo/Redo button: tap = undo, press-and-hold = one redo. Disabled on a win.
+    let over_undo = !session.is_won() && layout.button_at(ptr.x, ptr.y) == Some(ButtonId::UndoRedo);
     if ptr.pressed && over_undo && drag.is_none() {
         *undo_press = Some(get_time());
         *undo_fired = false;
@@ -474,7 +480,8 @@ fn handle_input(
             return;
         }
         if layout.indicator_at(ptr.x, ptr.y) {
-            if assist.status() != Status::Checking {
+            // The solver button is inert while checking or after a win.
+            if assist.status() != Status::Checking && !session.is_won() {
                 *overlay = Overlay::Solver;
             }
             return;
