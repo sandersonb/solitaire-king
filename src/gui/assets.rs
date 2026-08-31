@@ -104,10 +104,10 @@ impl Assets {
                     cards_mobile.insert((rank, suit), tex);
                 }
                 done += 1;
-                // Redraw progress every few assets to keep loading fast.
-                if done.is_multiple_of(8) {
-                    loading_frame(done, total, font.as_ref()).await;
-                }
+                // Draw the bar and yield after every card so the OS run loop is
+                // serviced between the (heavy) PNG decodes — otherwise macOS shows
+                // a beachball and the bar jumps instead of ticking.
+                loading_frame(done, total, font.as_ref()).await;
             }
         }
         loading_frame(total, total, font.as_ref()).await;

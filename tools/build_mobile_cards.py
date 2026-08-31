@@ -130,13 +130,13 @@ def paste_fit(canvas, piece, box, halign="center", valign="center"):
     canvas.alpha_composite(piece, (x, y))
 
 
-def build_card(src_path, scale=2):
+def build_card(src_path, scale=1.2):
     rank_bb, pip_bb, body_bb = classify(src_path)
     rank = render_region(src_path, rank_bb) if rank_bb else None
     pip = render_region(src_path, pip_bb) if pip_bb else None
     body = render_region(src_path, body_bb) if body_bb else None
 
-    W, H = OUT_W * scale, OUT_H * scale
+    W, H = round(OUT_W * scale), round(OUT_H * scale)
     canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     m = round(MARGIN * W)
     top_h = round(TOP_H * H)

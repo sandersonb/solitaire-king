@@ -3,6 +3,7 @@
 - [x] 1.1 In `web/index.html`, add a full-screen `#loading` spinner (CSS) behind the canvas (`z-index: 0`; canvas `z-index: 1`) so it shows during the WASM download and is covered once the first opaque frame paints
 - [x] 1.2 Make `Assets::load` stream: load textures/font one at a time, and every few assets draw a progress bar (built-in font + rectangles) and `next_frame().await`; tolerate missing optional assets
 - [x] 1.3 Enter the splash only after streaming load completes; confirm native + wasm still start cleanly
+- [x] 1.4 Loading responsiveness: draw the bar and `next_frame().await` after *every* card (not every 8) so the OS run loop is serviced between the heavy PNG decodes (fixes the macOS beachball and the bar not ticking); shrink the mobile card set from 1000×1400 to 600×840 (still crisp, ~half the download and a third less decode/RAM) via `tools/build_mobile_cards.py` (default scale 1.2)
 
 ## 2. Declutter + pointer hold support
 
