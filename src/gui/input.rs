@@ -55,6 +55,8 @@ pub struct Pointer {
     pub y: f32,
     /// Went down this frame.
     pub pressed: bool,
+    /// Held down this frame (for press-and-hold detection).
+    pub down: bool,
     /// Released this frame.
     pub released: bool,
 }
@@ -62,15 +64,21 @@ pub struct Pointer {
 /// Read the current pointer, preferring an active touch over the mouse.
 pub fn read_pointer() -> Pointer {
     if let Some(t) = touches().into_iter().next() {
-        let (pressed, released) = match t.phase {
-            TouchPhase::Started => (true, false),
-            TouchPhase::Moved | TouchPhase::Stationary => (false, false),
-            TouchPhase::Ended | TouchPhase::Cancelled => (false, true),
+        let (pressed, down, released) = match t.phase {
+            TouchPhase::Started => (true, true, false),
+            TouchPhase::Moved | TouchPhase::Stationary => (false, true, false),
+            TouchPhase::Ended | TouchPhase::Cancelled => (false, false, true),
         };
+        // macroquad's `touches()` returns positions in *physical* pixels (unlike
+        // `mouse_position()` and `screen_width()`, which are divided by the DPI
+        // scale). On a Retina/iOS display that mismatch throws touch hit-testing
+        // off by the DPI factor, so convert to the same logical space here.
+        let dpi = screen_dpi_scale();
         Pointer {
-            x: t.position.x,
-            y: t.position.y,
+            x: t.position.x / dpi,
+            y: t.position.y / dpi,
             pressed,
+            down,
             released,
         }
     } else {
@@ -79,6 +87,7 @@ pub fn read_pointer() -> Pointer {
             x,
             y,
             pressed: is_mouse_button_pressed(MouseButton::Left),
+            down: is_mouse_button_down(MouseButton::Left),
             released: is_mouse_button_released(MouseButton::Left),
         }
     }

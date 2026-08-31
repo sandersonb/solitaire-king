@@ -56,7 +56,12 @@ pub struct Animator {
     pub anims: Vec<CardAnim>,
     /// Moves queued for automated playback (drained by the main loop when idle).
     queue: Vec<Move>,
+    /// Earliest time the next queued move may start (paces auto-solve playback).
+    next_at: f64,
 }
+
+/// Delay between successive auto-played moves (seconds).
+pub const PLAY_SECS: f64 = 0.5;
 
 impl Animator {
     pub fn new() -> Self {
@@ -88,21 +93,30 @@ impl Animator {
             .sum()
     }
 
-    /// Queue a sequence of moves for automated playback (e.g. animating a
-    /// solver's solution). The main loop applies and animates them in order when
-    /// no drag or animation is in flight. Reserved for a future auto-play/solver
-    /// feature; not yet driven by the UI.
-    #[allow(dead_code)]
-    pub fn enqueue_moves(&mut self, moves: &[Move]) {
+    /// Queue a sequence of moves for automated playback (auto-solve). They are
+    /// applied and animated in order, paced by `PLAY_SECS`.
+    pub fn enqueue_moves(&mut self, moves: &[Move], now: f64) {
         self.queue.extend_from_slice(moves);
+        self.next_at = now; // the first move may play immediately
     }
 
-    /// Pop the next queued playback move, if any.
-    pub fn next_queued(&mut self) -> Option<Move> {
-        if self.queue.is_empty() {
-            None
-        } else {
-            Some(self.queue.remove(0))
+    /// Whether any queued playback moves remain.
+    pub fn has_queued(&self) -> bool {
+        !self.queue.is_empty()
+    }
+
+    /// Discard any queued playback moves (e.g. to cancel an auto-solve).
+    pub fn clear_queue(&mut self) {
+        self.queue.clear();
+    }
+
+    /// Pop the next queued move if the pacing interval has elapsed, advancing the
+    /// next-allowed time by `PLAY_SECS`.
+    pub fn take_next(&mut self, now: f64) -> Option<Move> {
+        if self.queue.is_empty() || now < self.next_at {
+            return None;
         }
+        self.next_at = now + PLAY_SECS;
+        Some(self.queue.remove(0))
     }
 }

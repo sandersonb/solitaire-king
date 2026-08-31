@@ -12,6 +12,10 @@ pub struct Session {
     redo: Vec<Move>,
     elapsed_secs: u64,
     message: Option<String>,
+    /// The deal is being (or was) completed by auto-solve, so its score and time
+    /// are not counted (a future high-score feature checks `was_auto_solved`).
+    auto_solving: bool,
+    auto_solved: bool,
 }
 
 impl Session {
@@ -23,7 +27,36 @@ impl Session {
             redo: Vec::new(),
             elapsed_secs: 0,
             message: None,
+            auto_solving: false,
+            auto_solved: false,
         }
+    }
+
+    /// Whether an auto-solve is in progress.
+    pub fn is_auto_solving(&self) -> bool {
+        self.auto_solving
+    }
+
+    /// Whether this game was completed by auto-solve (score/time not counted).
+    pub fn was_auto_solved(&self) -> bool {
+        self.auto_solved
+    }
+
+    /// Begin auto-solving: the timer freezes at zero and the finish will not be
+    /// recorded as a scored win.
+    pub fn begin_auto_solve(&mut self) {
+        self.auto_solving = true;
+    }
+
+    /// Mark the auto-solve finished (called on reaching the won state).
+    pub fn finish_auto_solve(&mut self) {
+        self.auto_solving = false;
+        self.auto_solved = true;
+    }
+
+    /// Cancel an in-progress auto-solve without marking it solved.
+    pub fn cancel_auto_solve(&mut self) {
+        self.auto_solving = false;
     }
 
     pub fn seed(&self) -> u64 {

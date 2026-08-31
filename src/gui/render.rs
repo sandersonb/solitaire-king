@@ -207,6 +207,7 @@ pub fn board(
     layout: &Layout,
     drag: Option<&Drag>,
     anim: &Animator,
+    show_seed: bool,
 ) {
     clear_background(TABLE);
     let state = &session.state;
@@ -321,7 +322,7 @@ pub fn board(
     }
 
     draw_control_bar(assets, layout);
-    draw_status(session, assets);
+    draw_status(session, assets, show_seed);
 
     if session.is_won() {
         draw_win_banner(session, assets);
@@ -358,10 +359,11 @@ fn draw_control_bar(assets: &Assets, layout: &Layout) {
         round_rect(*r, r.h * 0.22, bg);
         draw_rectangle_lines(r.x, r.y, r.w, r.h, 2.0, BTN_EDGE);
         let label = match id {
-            ButtonId::Undo => "Undo",
+            ButtonId::UndoRedo => "Undo",
             ButtonId::New => "New",
+            ButtonId::Settings => "Settings",
         };
-        let fs = (r.h * 0.5).round();
+        let fs = (r.h * 0.44).round();
         let dims = measure(font, label, fs);
         text(
             font,
@@ -384,12 +386,26 @@ pub enum DialogChoice {
 /// Draw the solvability indicator badge at the left of the control bar, with a
 /// distinct visual per status. Drawn as vector shapes so it needs no special
 /// font glyph coverage.
-pub fn solver_indicator(assets: &Assets, layout: &Layout, status: Status) {
-    let s = layout.bar.h * 0.66;
-    let pad = (layout.bar.h - s) / 2.0;
-    let r = Rect::new(layout.bar.x + pad + s * 0.2, layout.bar.y + pad, s, s);
+pub fn solver_indicator(assets: &Assets, layout: &Layout, status: Status, disabled: bool) {
+    let r = layout.indicator;
+    let s = r.w;
     let cx = r.x + r.w / 2.0;
     let cy = r.y + r.h / 2.0;
+    let lw = (s * 0.09).max(2.0);
+
+    // Disabled: a muted badge with a dash, and no status visual.
+    if disabled {
+        round_rect(r, s * 0.22, Color::new(0.30, 0.33, 0.30, 1.0));
+        draw_line(
+            cx - s * 0.22,
+            cy,
+            cx + s * 0.22,
+            cy,
+            lw,
+            Color::new(0.8, 0.8, 0.8, 0.7),
+        );
+        return;
+    }
 
     let green = Color::new(0.20, 0.65, 0.30, 1.0);
     let red = Color::new(0.80, 0.20, 0.20, 1.0);
@@ -403,7 +419,6 @@ pub fn solver_indicator(assets: &Assets, layout: &Layout, status: Status) {
     };
     round_rect(r, s * 0.22, bg);
 
-    let lw = (s * 0.09).max(2.0);
     match status {
         Status::Solvable => {
             // Check mark.
@@ -531,27 +546,256 @@ pub fn unwinnable_dialog(assets: &Assets) {
     }
 }
 
-fn draw_status(session: &Session, assets: &Assets) {
+// --- Solver overlay & Settings dialog ---------------------------------------
+
+/// A button in the solver status overlay.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SolverAction {
+    AutoSolve,
+    NewGame,
+    Close,
+}
+
+/// A row in the Settings dialog.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SettingRow {
+    DrawMode,
+    Solver,
+    Seed,
+    Close,
+}
+
+/// The centered modal panel rect.
+fn panel_rect() -> Rect {
+    let (sw, sh) = (screen_width(), screen_height());
+    let pw = (sw * 0.62).clamp(300.0, 560.0);
+    let ph = (sh * 0.40).clamp(200.0, 320.0);
+    Rect::new((sw - pw) / 2.0, (sh - ph) / 2.0, pw, ph)
+}
+
+/// Evenly place `n` buttons in a row near the bottom of `panel`.
+fn button_row(panel: Rect, n: usize) -> Vec<Rect> {
+    if n == 0 {
+        return Vec::new();
+    }
+    let bw = (panel.w * 0.36).min(200.0);
+    let bh = (panel.h * 0.20).clamp(40.0, 64.0);
+    let gap = panel.w * 0.05;
+    let total = bw * n as f32 + gap * (n as f32 - 1.0);
+    let bx = panel.x + (panel.w - total) / 2.0;
+    let by = panel.y + panel.h - bh - panel.h * 0.10;
+    (0..n)
+        .map(|i| Rect::new(bx + i as f32 * (bw + gap), by, bw, bh))
+        .collect()
+}
+
+fn draw_button(assets: &Assets, r: Rect, label: &str) {
+    let (px, py) = mouse_position();
+    let hot = px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+    let bg = if hot && is_mouse_button_down(MouseButton::Left) {
+        Color::new(0.14, 0.45, 0.24, 1.0)
+    } else {
+        BTN_BG
+    };
+    round_rect(r, r.h * 0.22, bg);
+    draw_rectangle_lines(r.x, r.y, r.w, r.h, 2.0, BTN_EDGE);
     let font = assets.font.as_ref();
+    let fs = (r.h * 0.42).round();
+    let dims = measure(font, label, fs);
+    text(
+        font,
+        label,
+        r.x + (r.w - dims.width) / 2.0,
+        r.y + (r.h + dims.height) / 2.0,
+        fs,
+        CREAM,
+    );
+}
+
+/// The actions (and their rects) offered by the solver overlay for a status.
+pub fn solver_overlay_actions(
+    status: Status,
+    has_solution: bool,
+    enabled: bool,
+) -> Vec<(SolverAction, Rect)> {
+    let acts: Vec<SolverAction> = if !enabled {
+        vec![SolverAction::Close]
+    } else {
+        match status {
+            Status::Solvable if has_solution => vec![SolverAction::AutoSolve, SolverAction::Close],
+            Status::Unwinnable => vec![SolverAction::NewGame, SolverAction::Close],
+            _ => vec![SolverAction::Close],
+        }
+    };
+    let rects = button_row(panel_rect(), acts.len());
+    acts.into_iter().zip(rects).collect()
+}
+
+/// Draw the solver status overlay for the current status.
+pub fn solver_overlay(assets: &Assets, status: Status, sol_len: Option<usize>, enabled: bool) {
+    let (sw, sh) = (screen_width(), screen_height());
+    draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.0, 0.0, 0.0, 0.5));
+    let panel = panel_rect();
+    round_rect(panel, 16.0, Color::new(0.12, 0.16, 0.13, 1.0));
+    draw_rectangle_lines(panel.x, panel.y, panel.w, panel.h, 2.0, BTN_EDGE);
+
+    let font = assets.font.as_ref();
+    let center = |s: &str, y: f32, fs: f32, color: Color| {
+        let dims = measure(font, s, fs);
+        text(font, s, sw / 2.0 - dims.width / 2.0, y, fs, color);
+    };
+
+    let (title, sub) = if !enabled {
+        (
+            "Solver is off".to_string(),
+            "Enable the background solver in Settings.".to_string(),
+        )
+    } else {
+        match status {
+            Status::Solvable => (
+                "A solution exists".to_string(),
+                match sol_len {
+                    Some(n) => format!("Win in {n} moves. Auto-solve to watch it play out."),
+                    None => "Auto-solve will be available once the line is found.".to_string(),
+                },
+            ),
+            Status::Unwinnable => (
+                "No solution".to_string(),
+                "This deal can't be won — but undoing may reopen a solution.".to_string(),
+            ),
+            Status::Checking => (
+                "Checking…".to_string(),
+                "The solver is evaluating this position.".to_string(),
+            ),
+            Status::Unknown | Status::Inconclusive => (
+                "Uncertain".to_string(),
+                "Play a few more moves to help determine solvability.".to_string(),
+            ),
+        }
+    };
+    center(&title, panel.y + panel.h * 0.28, 30.0, HILITE);
+    center(&sub, panel.y + panel.h * 0.46, 19.0, CREAM);
+
+    for (action, r) in solver_overlay_actions(status, sol_len.is_some(), enabled) {
+        let label = match action {
+            SolverAction::AutoSolve => "Auto-solve",
+            SolverAction::NewGame => "New game",
+            SolverAction::Close => "Close",
+        };
+        draw_button(assets, r, label);
+    }
+}
+
+/// The Settings dialog rows and their rects.
+pub fn settings_rows() -> Vec<(SettingRow, Rect)> {
+    let panel = panel_rect();
+    let m = panel.w * 0.08;
+    let rw = panel.w - 2.0 * m;
+    let rh = (panel.h * 0.16).clamp(34.0, 52.0);
+    let top = panel.y + panel.h * 0.22;
+    let step = rh + panel.h * 0.04;
+    let mut rows: Vec<(SettingRow, Rect)> =
+        [SettingRow::DrawMode, SettingRow::Solver, SettingRow::Seed]
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (*id, Rect::new(panel.x + m, top + i as f32 * step, rw, rh)))
+            .collect();
+    // Close button at the bottom center.
+    let bw = (panel.w * 0.32).min(180.0);
+    let bh = (panel.h * 0.18).clamp(38.0, 56.0);
+    rows.push((
+        SettingRow::Close,
+        Rect::new(
+            panel.x + (panel.w - bw) / 2.0,
+            panel.y + panel.h - bh - panel.h * 0.08,
+            bw,
+            bh,
+        ),
+    ));
+    rows
+}
+
+/// Draw the Settings dialog reflecting the current toggle values.
+pub fn settings_overlay(assets: &Assets, draw_three: bool, solver_on: bool, show_seed: bool) {
+    let (sw, sh) = (screen_width(), screen_height());
+    draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.0, 0.0, 0.0, 0.5));
+    let panel = panel_rect();
+    round_rect(panel, 16.0, Color::new(0.12, 0.16, 0.13, 1.0));
+    draw_rectangle_lines(panel.x, panel.y, panel.w, panel.h, 2.0, BTN_EDGE);
+    let font = assets.font.as_ref();
+    let title = "Settings";
+    let dims = measure(font, title, 28.0);
+    text(
+        font,
+        title,
+        sw / 2.0 - dims.width / 2.0,
+        panel.y + panel.h * 0.15,
+        28.0,
+        HILITE,
+    );
+
+    for (id, r) in settings_rows() {
+        if id == SettingRow::Close {
+            draw_button(assets, r, "Close");
+            continue;
+        }
+        // A labelled row with its current value on the right (tap toggles).
+        round_rect(r, r.h * 0.2, Color::new(0.08, 0.30, 0.16, 1.0));
+        draw_rectangle_lines(r.x, r.y, r.w, r.h, 2.0, BTN_EDGE);
+        let (label, value) = match id {
+            SettingRow::DrawMode => ("Draw (next game)", if draw_three { "three" } else { "one" }),
+            SettingRow::Solver => ("Background solver", if solver_on { "on" } else { "off" }),
+            SettingRow::Seed => ("Show seed", if show_seed { "on" } else { "off" }),
+            SettingRow::Close => unreachable!(),
+        };
+        let fs = (r.h * 0.5).round();
+        text(
+            font,
+            label,
+            r.x + r.h * 0.3,
+            r.y + (r.h + fs * 0.7) / 2.0,
+            fs,
+            CREAM,
+        );
+        let vd = measure(font, value, fs);
+        text(
+            font,
+            value,
+            r.x + r.w - vd.width - r.h * 0.3,
+            r.y + (r.h + fs * 0.7) / 2.0,
+            fs,
+            HILITE,
+        );
+    }
+}
+
+fn draw_status(session: &Session, assets: &Assets, show_seed: bool) {
+    let font = assets.font.as_ref();
+    // Auto-solved games are not scored/timed: show dashes rather than a value.
+    let auto = session.is_auto_solving() || session.was_auto_solved();
+    let (score, time) = if auto {
+        ("—".to_string(), "—".to_string())
+    } else {
+        (
+            session.score().to_string(),
+            fmt_time(session.elapsed_secs()),
+        )
+    };
+    let seed = if show_seed {
+        format!("seed {}    ", klondike::seed::encode(session.seed()))
+    } else {
+        String::new()
+    };
     let line = format!(
-        "seed {}    moves {}    score {}    time {}",
-        klondike::seed::encode(session.seed()),
+        "{seed}moves {}    score {}    time {}",
         session.move_count(),
-        session.score(),
-        fmt_time(session.elapsed_secs()),
+        score,
+        time,
     );
     text(font, &line, 12.0, 24.0, 24.0, CREAM);
     if let Some(msg) = session.message() {
         text(font, msg, 12.0, screen_height() - 30.0, 22.0, HILITE);
     }
-    text(
-        font,
-        "drag to move · dbl-click/Enter auto · U undo · R redo · N new",
-        12.0,
-        screen_height() - 8.0,
-        18.0,
-        Color::new(1.0, 1.0, 1.0, 0.6),
-    );
 }
 
 fn draw_win_banner(session: &Session, assets: &Assets) {
@@ -574,16 +818,21 @@ fn draw_win_banner(session: &Session, assets: &Assets) {
         let dims = measure(font, s, fs);
         text(font, s, sw / 2.0 - dims.width / 2.0, y, fs, color);
     };
-    center("You win!", sh * 0.52, 56.0, HILITE);
-    center(
-        &format!(
-            "final score {}   in {}",
-            session.final_score(),
-            fmt_time(session.elapsed_secs())
-        ),
-        sh * 0.60,
-        28.0,
-        CREAM,
-    );
-    center("press N for a new game", sh * 0.68, 22.0, CREAM);
+    if session.was_auto_solved() {
+        center("Auto-solved", sh * 0.52, 56.0, HILITE);
+        center("(not a scored win)", sh * 0.60, 24.0, CREAM);
+    } else {
+        center("You win!", sh * 0.52, 56.0, HILITE);
+        center(
+            &format!(
+                "final score {}   in {}",
+                session.final_score(),
+                fmt_time(session.elapsed_secs())
+            ),
+            sh * 0.60,
+            28.0,
+            CREAM,
+        );
+    }
+    center("New game to play again", sh * 0.68, 22.0, CREAM);
 }

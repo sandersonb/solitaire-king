@@ -14,8 +14,10 @@ const MIN_FAN_FRAC: f32 = 0.10;
 /// An on-screen control-bar button.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ButtonId {
-    Undo,
+    /// Tap = undo, press-and-hold = redo.
+    UndoRedo,
     New,
+    Settings,
 }
 
 pub struct Layout {
@@ -32,7 +34,9 @@ pub struct Layout {
     /// The on-screen control bar along the bottom edge.
     pub bar: Rect,
     /// On-screen buttons within the bar.
-    pub buttons: [(ButtonId, Rect); 2],
+    pub buttons: [(ButtonId, Rect); 3],
+    /// The solvability-indicator button rect (left of the bar).
+    pub indicator: Rect,
 }
 
 impl Layout {
@@ -99,17 +103,22 @@ impl Layout {
             default_fan
         };
 
-        // Two buttons on the right of the bar (Undo, New), as touch targets.
+        // Three buttons right-aligned in the bar (UndoRedo, New, Settings), as
+        // touch targets, and the solvability indicator at the left.
         let bh = bar_h * 0.72;
-        let bw = (sw * 0.20).clamp(90.0, 190.0);
+        let bw = (sw * 0.16).clamp(76.0, 150.0);
         let pad = (bar_h - bh) / 2.0;
         let by = bar.y + pad;
-        let new_x = sw - margin - bw;
+        let settings_x = sw - margin - bw;
+        let new_x = settings_x - gap - bw;
         let undo_x = new_x - gap - bw;
         let buttons = [
-            (ButtonId::Undo, Rect::new(undo_x, by, bw, bh)),
+            (ButtonId::UndoRedo, Rect::new(undo_x, by, bw, bh)),
             (ButtonId::New, Rect::new(new_x, by, bw, bh)),
+            (ButtonId::Settings, Rect::new(settings_x, by, bw, bh)),
         ];
+        let ind = bar_h * 0.66;
+        let indicator = Rect::new(bar.x + margin, bar.y + (bar_h - ind) / 2.0, ind, ind);
 
         Layout {
             card_w,
@@ -121,6 +130,7 @@ impl Layout {
             mobile,
             bar,
             buttons,
+            indicator,
         }
     }
 
@@ -136,6 +146,11 @@ impl Layout {
             .iter()
             .find(|(_, r)| contains(*r, x, y))
             .map(|(id, _)| *id)
+    }
+
+    /// Whether point `(x, y)` is over the solvability indicator button.
+    pub fn indicator_at(&self, x: f32, y: f32) -> bool {
+        contains(self.indicator, x, y)
     }
 }
 

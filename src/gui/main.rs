@@ -18,9 +18,50 @@ use input::{
 };
 use klondike::{Card, DrawMode, GameConfig, Move};
 use layout::{ButtonId, Layout};
-use render::DialogChoice;
+use render::{DialogChoice, SettingRow, SolverAction};
 use session::Session;
-use solver::Assist;
+use solver::{Assist, Status};
+
+/// Press-and-hold threshold for the Undo button to redo (seconds).
+const UNDO_HOLD_SECS: f64 = 0.4;
+
+/// In-session settings (not persisted across launches).
+struct Settings {
+    draw_three: bool,
+    solver_enabled: bool,
+    show_seed: bool,
+}
+
+impl Settings {
+    fn from_config(cfg: GameConfig) -> Self {
+        Settings {
+            draw_three: matches!(cfg.draw_mode, DrawMode::Three),
+            solver_enabled: true,
+            show_seed: true,
+        }
+    }
+
+    /// The game config for a new deal, applying the chosen draw mode.
+    fn game_config(&self, base: GameConfig) -> GameConfig {
+        GameConfig {
+            draw_mode: if self.draw_three {
+                DrawMode::Three
+            } else {
+                DrawMode::One
+            },
+            ..base
+        }
+    }
+}
+
+/// Which modal overlay (if any) is open. The unwinnable dialog is tracked
+/// separately by the assist.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Overlay {
+    None,
+    Solver,
+    Settings,
+}
 
 fn window_conf() -> Conf {
     Conf {
@@ -97,6 +138,10 @@ async fn main() {
     let mut drag: Option<Drag> = None;
     let mut anim = Animator::new();
     let mut assist = Assist::new(&session.state);
+    let mut settings = Settings::from_config(cfg);
+    let mut overlay = Overlay::None;
+    let mut undo_press: Option<f64> = None;
+    let mut undo_fired = false;
     let mut last_seed = session.seed();
     let mut last_key = klondike::encode(&session.state);
     let mut last_tap = 0.0f64;
@@ -128,61 +173,113 @@ async fn main() {
                     .unwrap_or(1);
                 let layout =
                     Layout::compute(screen_width(), screen_height(), max_col_len, touch_seen);
-                if !session.is_won() {
+                // The timer is frozen at zero while auto-solving (not a scored win).
+                if session.is_auto_solving() {
+                    session.set_elapsed(0);
+                } else if !session.is_won() {
                     session.set_elapsed((get_time() - game_start).max(0.0) as u64);
                 }
                 anim.tick(get_time());
+
+                // Input priority: unwinnable dialog → overlay → auto-solve → board.
                 if assist.dialog_open() {
-                    // The dialog is modal: it swallows board input.
                     handle_dialog(
                         &ptr,
                         &mut session,
                         &mut assist,
                         &mut anim,
                         &mut game_start,
+                        &settings,
                         cfg,
                     );
+                } else if overlay == Overlay::Solver {
+                    handle_solver_overlay(
+                        &ptr,
+                        &mut session,
+                        &mut assist,
+                        &mut anim,
+                        &mut game_start,
+                        &settings,
+                        cfg,
+                        &mut overlay,
+                    );
+                } else if overlay == Overlay::Settings {
+                    handle_settings(&ptr, &mut assist, &mut settings, &session, &mut overlay);
+                } else if session.is_auto_solving() {
+                    handle_autosolve(&ptr, &mut session, &mut anim);
                 } else {
                     handle_input(
                         &mut session,
                         &mut drag,
                         &mut anim,
+                        &mut assist,
                         &layout,
+                        &settings,
                         cfg,
                         &mut game_start,
+                        &mut overlay,
                         &mut last_tap,
                         &mut last_hit,
+                        &mut undo_press,
+                        &mut undo_fired,
                         &ptr,
                     );
-                    // Automated playback: when idle, apply and animate a queued move.
+                }
+
+                // Drive auto-solve playback at its cadence.
+                if session.is_auto_solving() {
                     if drag.is_none() && !anim.is_animating() {
-                        if let Some(mv) = anim.next_queued() {
+                        if let Some(mv) = anim.take_next(get_time()) {
                             play_queued(&mut session, &mut anim, &layout, mv);
+                        } else if !anim.has_queued() {
+                            if session.is_won() {
+                                session.finish_auto_solve();
+                            } else {
+                                session.cancel_auto_solve();
+                            }
                         }
                     }
+                } else {
+                    // Detect state changes so the assist re-evaluates.
+                    if session.seed() != last_seed {
+                        assist.reset(&session.state);
+                    } else if klondike::encode(&session.state) != last_key {
+                        assist.on_state_change(&session.state);
+                    }
+                    if ptr.pressed || ptr.released {
+                        assist.note_activity();
+                    }
+                    assist.update(&session.state);
                 }
+                // Keep the seed/key baseline current (also across auto-solve).
+                last_seed = session.seed();
+                last_key = klondike::encode(&session.state);
 
-                // Detect state changes so the assist re-evaluates: a new seed is a
-                // fresh deal (reset knowledge); any other position change is a
-                // move/undo/redo.
-                let seed_now = session.seed();
-                let key_now = klondike::encode(&session.state);
-                if seed_now != last_seed {
-                    assist.reset(&session.state);
-                    last_seed = seed_now;
-                } else if key_now != last_key {
-                    assist.on_state_change(&session.state);
-                }
-                last_key = key_now;
-                if ptr.pressed || ptr.released {
-                    assist.note_activity();
-                }
-                assist.update(&session.state);
-
-                render::board(&session, &assets, &layout, drag.as_ref(), &anim);
-                render::solver_indicator(&assets, &layout, assist.status());
+                render::board(
+                    &session,
+                    &assets,
+                    &layout,
+                    drag.as_ref(),
+                    &anim,
+                    settings.show_seed,
+                );
+                render::solver_indicator(&assets, &layout, assist.status(), !assist.enabled());
                 if assist.dialog_open() {
                     render::unwinnable_dialog(&assets);
+                } else if overlay == Overlay::Solver {
+                    render::solver_overlay(
+                        &assets,
+                        assist.status(),
+                        assist.solution_len(&session.state),
+                        assist.enabled(),
+                    );
+                } else if overlay == Overlay::Settings {
+                    render::settings_overlay(
+                        &assets,
+                        settings.draw_three,
+                        settings.solver_enabled,
+                        settings.show_seed,
+                    );
                 }
             }
         }
@@ -191,25 +288,110 @@ async fn main() {
 }
 
 /// Handle input while the unwinnable dialog is open: only its buttons respond.
+#[allow(clippy::too_many_arguments)]
 fn handle_dialog(
     ptr: &Pointer,
     session: &mut Session,
     assist: &mut Assist,
     anim: &mut Animator,
     game_start: &mut f64,
+    settings: &Settings,
     cfg: GameConfig,
 ) {
     if !ptr.pressed {
         return;
     }
     for (choice, r) in render::dialog_button_rects() {
-        if ptr.x >= r.x && ptr.x <= r.x + r.w && ptr.y >= r.y && ptr.y <= r.y + r.h {
+        if rect_hit(r, ptr) {
             match choice {
                 DialogChoice::Continue => assist.dismiss_dialog(),
-                DialogChoice::NewGame => new_game(session, anim, game_start, cfg),
+                DialogChoice::NewGame => {
+                    new_game(session, anim, game_start, settings.game_config(cfg))
+                }
             }
             return;
         }
+    }
+}
+
+/// Handle input for the solver status overlay.
+#[allow(clippy::too_many_arguments)]
+fn handle_solver_overlay(
+    ptr: &Pointer,
+    session: &mut Session,
+    assist: &mut Assist,
+    anim: &mut Animator,
+    game_start: &mut f64,
+    settings: &Settings,
+    cfg: GameConfig,
+    overlay: &mut Overlay,
+) {
+    if !ptr.pressed {
+        return;
+    }
+    for (action, r) in render::solver_overlay_actions(
+        assist.status(),
+        assist.solution_len(&session.state).is_some(),
+        assist.enabled(),
+    ) {
+        if rect_hit(r, ptr) {
+            match action {
+                SolverAction::AutoSolve => start_autosolve(session, assist, anim),
+                SolverAction::NewGame => {
+                    new_game(session, anim, game_start, settings.game_config(cfg))
+                }
+                SolverAction::Close => {}
+            }
+            *overlay = Overlay::None;
+            return;
+        }
+    }
+    // Clicking outside the panel closes it.
+    *overlay = Overlay::None;
+}
+
+/// Handle input for the Settings dialog.
+fn handle_settings(
+    ptr: &Pointer,
+    assist: &mut Assist,
+    settings: &mut Settings,
+    session: &Session,
+    overlay: &mut Overlay,
+) {
+    if !ptr.pressed {
+        return;
+    }
+    for (row, r) in render::settings_rows() {
+        if rect_hit(r, ptr) {
+            match row {
+                SettingRow::DrawMode => settings.draw_three = !settings.draw_three,
+                SettingRow::Solver => {
+                    settings.solver_enabled = !settings.solver_enabled;
+                    assist.set_enabled(settings.solver_enabled, &session.state);
+                }
+                SettingRow::Seed => settings.show_seed = !settings.show_seed,
+                SettingRow::Close => *overlay = Overlay::None,
+            }
+            return;
+        }
+    }
+    *overlay = Overlay::None; // click outside closes
+}
+
+/// While auto-solving, any press or key cancels playback and returns to play.
+fn handle_autosolve(ptr: &Pointer, session: &mut Session, anim: &mut Animator) {
+    if ptr.pressed || get_last_key_pressed().is_some() {
+        anim.clear_queue();
+        session.cancel_auto_solve();
+    }
+}
+
+/// Begin auto-solving if a winning line is known for the current position.
+fn start_autosolve(session: &mut Session, assist: &Assist, anim: &mut Animator) {
+    if let Some(moves) = assist.solution_for(&session.state) {
+        let moves = moves.to_vec();
+        session.begin_auto_solve();
+        anim.enqueue_moves(&moves, get_time());
     }
 }
 
@@ -218,16 +400,21 @@ fn handle_input(
     session: &mut Session,
     drag: &mut Option<Drag>,
     anim: &mut Animator,
+    assist: &mut Assist,
     layout: &Layout,
+    settings: &Settings,
     cfg: GameConfig,
     game_start: &mut f64,
+    overlay: &mut Overlay,
     last_tap: &mut f64,
     last_hit: &mut Option<Hit>,
+    undo_press: &mut Option<f64>,
+    undo_fired: &mut bool,
     ptr: &Pointer,
 ) {
-    // Keyboard commands (native) stay available alongside touch controls.
+    // Keyboard commands stay available (no longer advertised on screen).
     if is_key_pressed(KeyCode::N) {
-        new_game(session, anim, game_start, cfg);
+        new_game(session, anim, game_start, settings.game_config(cfg));
         *drag = None;
     }
     if is_key_pressed(KeyCode::U) {
@@ -244,13 +431,51 @@ fn handle_input(
     if is_key_pressed(KeyCode::Enter) && session.state.waste.top().is_some() {
         auto_move(session, anim, layout, Source::Waste);
     }
+    // Shift+A auto-solves when a solution is known.
+    if is_key_pressed(KeyCode::A)
+        && (is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift))
+        && assist.solution_for(&session.state).is_some()
+    {
+        start_autosolve(session, assist, anim);
+        return;
+    }
+
+    // Undo/Redo button: tap = undo, press-and-hold = one redo.
+    let over_undo = layout.button_at(ptr.x, ptr.y) == Some(ButtonId::UndoRedo);
+    if ptr.pressed && over_undo && drag.is_none() {
+        *undo_press = Some(get_time());
+        *undo_fired = false;
+        return;
+    }
+    if undo_press.is_some() {
+        let start = undo_press.unwrap();
+        if ptr.down && over_undo {
+            if !*undo_fired && get_time() - start > UNDO_HOLD_SECS {
+                session.redo();
+                *undo_fired = true;
+            }
+        } else {
+            if ptr.released && over_undo && !*undo_fired {
+                session.undo();
+            }
+            *undo_press = None;
+        }
+        return;
+    }
 
     if ptr.pressed && drag.is_none() {
-        // On-screen control buttons take priority over the board.
+        // Other control buttons and the indicator take priority over the board.
         if let Some(btn) = layout.button_at(ptr.x, ptr.y) {
             match btn {
-                ButtonId::Undo => session.undo(),
-                ButtonId::New => new_game(session, anim, game_start, cfg),
+                ButtonId::New => new_game(session, anim, game_start, settings.game_config(cfg)),
+                ButtonId::Settings => *overlay = Overlay::Settings,
+                ButtonId::UndoRedo => {}
+            }
+            return;
+        }
+        if layout.indicator_at(ptr.x, ptr.y) {
+            if assist.status() != Status::Checking {
+                *overlay = Overlay::Solver;
             }
             return;
         }
@@ -292,11 +517,17 @@ fn handle_input(
     }
 }
 
+/// Whether the pointer is over rect `r`.
+fn rect_hit(r: macroquad::prelude::Rect, ptr: &Pointer) -> bool {
+    ptr.x >= r.x && ptr.x <= r.x + r.w && ptr.y >= r.y && ptr.y <= r.y + r.h
+}
+
 /// Start a fresh game, clearing any in-flight animations.
 fn new_game(session: &mut Session, anim: &mut Animator, game_start: &mut f64, cfg: GameConfig) {
     *session = Session::new(random_seed(), cfg);
     *game_start = get_time();
     anim.anims.clear();
+    anim.clear_queue();
 }
 
 /// The top-left of a source's grabbed card and the run it carries.

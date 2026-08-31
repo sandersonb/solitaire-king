@@ -11,7 +11,9 @@ use std::collections::HashMap;
 
 use macroquad::prelude::get_time;
 
-use klondike::{encode, solve_reusing, ClosedTable, GameState, PositionKey, SolveOptions, Verdict};
+use klondike::{
+    encode, solve_reusing, ClosedTable, GameState, Move, PositionKey, SolveOptions, Verdict,
+};
 
 /// Wall-clock cap on a single background check (seconds of solver work).
 const CHECK_BUDGET_SECS: f64 = 1.0;
@@ -58,6 +60,11 @@ pub struct Assist {
     /// Suppresses the dialog after the player chose Continue, until solvability
     /// returns (status leaves Unwinnable).
     dismissed_streak: bool,
+    /// The winning line found for the most recently solved position, so the
+    /// overlay can report its length and auto-solve can replay it.
+    solution: Option<(PositionKey, Vec<Move>)>,
+    /// When false, no background checks run (Settings toggle).
+    enabled: bool,
 }
 
 impl Assist {
@@ -72,6 +79,8 @@ impl Assist {
             last_activity: get_time(),
             dialog_open: false,
             dismissed_streak: false,
+            solution: None,
+            enabled: true,
         };
         a.begin_check(state);
         a
@@ -85,6 +94,40 @@ impl Assist {
         self.dialog_open
     }
 
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Enable/disable background checking. Re-enabling schedules a fresh check of
+    /// the current position.
+    pub fn set_enabled(&mut self, on: bool, state: &GameState) {
+        if self.enabled == on {
+            return;
+        }
+        self.enabled = on;
+        self.check = None;
+        if on {
+            self.on_state_change(state);
+        } else {
+            self.status = Status::Unknown;
+            self.dialog_open = false;
+        }
+    }
+
+    /// The retained winning line for `state`, if one was found for it.
+    pub fn solution_for(&self, state: &GameState) -> Option<&[Move]> {
+        let key = encode(state);
+        self.solution
+            .as_ref()
+            .filter(|(k, _)| *k == key)
+            .map(|(_, moves)| moves.as_slice())
+    }
+
+    /// Number of moves in the retained winning line for `state`, if any.
+    pub fn solution_len(&self, state: &GameState) -> Option<usize> {
+        self.solution_for(state).map(|m| m.len())
+    }
+
     /// Reset for a new deal: drop knowledge and start a fresh opening check.
     pub fn reset(&mut self, state: &GameState) {
         self.table = ClosedTable::with_capacity(TABLE_CAP);
@@ -92,8 +135,11 @@ impl Assist {
         self.dismissed_streak = false;
         self.dialog_open = false;
         self.check = None;
+        self.solution = None;
         self.last_activity = get_time();
-        self.begin_check(state);
+        if self.enabled {
+            self.begin_check(state);
+        }
     }
 
     /// A move/undo/redo changed the position: record activity, abandon any
@@ -126,6 +172,9 @@ impl Assist {
 
     /// Per-frame: pump the active check a slice, or schedule one when idle.
     pub fn update(&mut self, state: &GameState) {
+        if !self.enabled {
+            return;
+        }
         // Abandon a check whose position no longer matches the board.
         if let Some(c) = self.check.as_ref() {
             if c.key != encode(state) {
@@ -139,7 +188,8 @@ impl Assist {
             check.spent += (get_time() - t0).max(0.0);
             match r.verdict {
                 Verdict::Solvable => {
-                    self.decided.insert(check.key, Verdict::Solvable);
+                    self.decided.insert(check.key.clone(), Verdict::Solvable);
+                    self.solution = Some((check.key, r.moveset.unwrap_or_default()));
                     self.last_activity = get_time();
                     self.set_status_from_verdict(Verdict::Solvable);
                 }
