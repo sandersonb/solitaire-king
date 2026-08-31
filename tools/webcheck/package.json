@@ -1,0 +1,12 @@
+{
+  "name": "klondike-webcheck",
+  "private": true,
+  "type": "module",
+  "description": "Playwright harness for capturing the web (WASM) build's load/render behavior.",
+  "scripts": {
+    "capture": "node capture.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}
