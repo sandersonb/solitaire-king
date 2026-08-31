@@ -144,6 +144,39 @@ fn draw_run(assets: &Assets, at: Vec2, cards: &[Card], card_w: f32, fan_dy: f32,
     }
 }
 
+/// Draw the loading screen (built-in font; the font asset may not be loaded yet).
+/// The main loop presents this every frame while assets stream in.
+pub fn loading(done: usize, total: usize) {
+    clear_background(TABLE);
+    let sw = screen_width();
+    let sh = screen_height();
+    let frac = if total == 0 {
+        0.0
+    } else {
+        (done as f32 / total as f32).clamp(0.0, 1.0)
+    };
+
+    // ASCII dots: the built-in font (used here, before ui.ttf loads) has no "…".
+    let title = "Loading...";
+    let fs = 32.0;
+    let dims = measure(None, title, fs);
+    text(
+        None,
+        title,
+        sw / 2.0 - dims.width / 2.0,
+        sh * 0.44,
+        fs,
+        CREAM,
+    );
+
+    let bw = (sw * 0.5).clamp(160.0, 420.0);
+    let bh = 16.0;
+    let bx = sw / 2.0 - bw / 2.0;
+    let by = sh * 0.5;
+    draw_rectangle_lines(bx, by, bw, bh, 2.0, BTN_EDGE);
+    draw_rectangle(bx + 2.0, by + 2.0, (bw - 4.0) * frac, bh - 4.0, WHITE);
+}
+
 /// Draw the splash screen: logo, title, version, build date, author.
 pub fn splash(assets: &Assets) {
     clear_background(TABLE);

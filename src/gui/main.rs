@@ -11,7 +11,7 @@ mod solver;
 use macroquad::prelude::*;
 
 use anim::{Animator, CardAnim, SNAP_SECS};
-use assets::Assets;
+use assets::{Assets, Loader};
 use input::{
     auto_target, hit_test, move_dest, nearest_pile, read_pointer, resolve, source_of, Drag, Hit,
     Pile, Pointer, Source,
@@ -123,18 +123,25 @@ fn random_seed() -> u64 {
 }
 
 enum App {
+    Loading,
     Splash(f64),
     Playing,
 }
 
+/// Textures decoded per frame during loading (keeps each frame light).
+const DECODE_PER_FRAME: usize = 4;
+
 #[macroquad::main(window_conf)]
 async fn main() {
     let (seed_arg, cfg) = parse_args();
-    let assets = Assets::load().await;
+    // Assets stream in via a background coroutine; the main loop draws the
+    // loading screen and decodes a few per frame (see the `App::Loading` arm).
+    let mut loader = Loader::start();
+    let mut assets: Option<Assets> = None;
 
     let mut session = Session::new(seed_arg.unwrap_or_else(random_seed), cfg);
     let mut game_start = get_time();
-    let mut app = App::Splash(get_time());
+    let mut app = App::Loading;
     let mut drag: Option<Drag> = None;
     let mut anim = Animator::new();
     let mut assist = Assist::new(&session.state);
@@ -154,8 +161,17 @@ async fn main() {
             touch_seen = true;
         }
         match app {
+            App::Loading => {
+                let (done, total) = loader.progress();
+                render::loading(done, total);
+                if let Some(a) = loader.poll(DECODE_PER_FRAME) {
+                    assets = Some(a);
+                    app = App::Splash(get_time());
+                }
+            }
             App::Splash(since) => {
-                render::splash(&assets);
+                let assets = assets.as_ref().unwrap();
+                render::splash(assets);
                 let shown = get_time() - since;
                 let dismiss = ptr.pressed || get_last_key_pressed().is_some() || shown > 3.0;
                 if shown > 0.3 && dismiss {
@@ -164,6 +180,7 @@ async fn main() {
                 }
             }
             App::Playing => {
+                let assets = assets.as_ref().unwrap();
                 let max_col_len = session
                     .state
                     .tableau
@@ -257,30 +274,30 @@ async fn main() {
 
                 render::board(
                     &session,
-                    &assets,
+                    assets,
                     &layout,
                     drag.as_ref(),
                     &anim,
                     settings.show_seed,
                 );
                 render::solver_indicator(
-                    &assets,
+                    assets,
                     &layout,
                     assist.status(),
                     !assist.enabled() || session.is_won(),
                 );
                 if assist.dialog_open() {
-                    render::unwinnable_dialog(&assets);
+                    render::unwinnable_dialog(assets);
                 } else if overlay == Overlay::Solver {
                     render::solver_overlay(
-                        &assets,
+                        assets,
                         assist.status(),
                         assist.solution_len(&session.state),
                         assist.enabled(),
                     );
                 } else if overlay == Overlay::Settings {
                     render::settings_overlay(
-                        &assets,
+                        assets,
                         settings.draw_three,
                         settings.solver_enabled,
                         settings.show_seed,
