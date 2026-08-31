@@ -21,6 +21,14 @@ If the glue and the wasm disagree on the ABI (`version=N` near the top of the
 file), the game will fail to start or misbehave on web only (native is
 unaffected). It's currently `version=2`, matching macroquad 0.4.x.
 
+**Local patch to re-apply after re-vendoring:** both `canvas.getContext("webgl"…)`
+calls are patched to `{alpha:false,preserveDrawingBuffer:true}`. The stock glue
+creates a transparent, non-preserving WebGL context, which on iOS Safari makes the
+canvas see-through (the HTML `#loading` overlay bleeds through the game) and flickers
+black between frames while assets load. An opaque, buffer-preserving context fixes
+both. The transparent-until-first-draw canvas still lets the CSS spinner show during
+the wasm download; once drawing starts the opaque canvas covers it.
+
 ## Web assets path
 
 The GUI calls `set_pc_assets_folder("assets")`, which prefixes every asset load

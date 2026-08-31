@@ -73,6 +73,11 @@ impl Assets {
         let total = 3 + Suit::ALL.len() * Rank::ALL.len() * 2;
         let mut done = 0usize;
 
+        // Paint the loading screen immediately (built-in font), before the first
+        // asset fetch, so the now-opaque WebGL canvas doesn't flash black between
+        // context creation and the first drawn frame on web.
+        loading_frame(0, total, None).await;
+
         // Load the font first so the loading screen (and splash) can use it;
         // absence is tolerated (built-in font is used).
         let font = load_ttf_font("fonts/ui.ttf").await.ok();
