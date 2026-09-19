@@ -30,6 +30,9 @@ struct Settings {
     draw_three: bool,
     solver_enabled: bool,
     show_seed: bool,
+    /// Deck override: `None` = Auto (follow the layout's width-based choice),
+    /// `Some(true)` = force detailed, `Some(false)` = force standard.
+    deck_override: Option<bool>,
 }
 
 impl Settings {
@@ -38,7 +41,23 @@ impl Settings {
             draw_three: matches!(cfg.draw_mode, DrawMode::Three),
             solver_enabled: true,
             show_seed: true,
+            deck_override: None,
         }
+    }
+
+    /// The effective deck signal: the override when set, else the automatic
+    /// width-based choice from the layout.
+    fn detailed_deck(&self, layout: &Layout) -> bool {
+        self.deck_override.unwrap_or(layout.detailed_deck)
+    }
+
+    /// Cycle the deck control: Auto → Detailed → Standard → Auto.
+    fn cycle_deck(&mut self) {
+        self.deck_override = match self.deck_override {
+            None => Some(true),
+            Some(true) => Some(false),
+            Some(false) => None,
+        };
     }
 
     /// The game config for a new deal, applying the chosen draw mode.
@@ -279,6 +298,7 @@ async fn main() {
                     drag.as_ref(),
                     &anim,
                     settings.show_seed,
+                    settings.detailed_deck(&layout),
                 );
                 render::solver_indicator(
                     assets,
@@ -301,6 +321,7 @@ async fn main() {
                         settings.draw_three,
                         settings.solver_enabled,
                         settings.show_seed,
+                        settings.deck_override,
                     );
                 }
             }
@@ -392,6 +413,7 @@ fn handle_settings(
                     assist.set_enabled(settings.solver_enabled, &session.state);
                 }
                 SettingRow::Seed => settings.show_seed = !settings.show_seed,
+                SettingRow::Deck => settings.cycle_deck(),
                 SettingRow::Close => *overlay = Overlay::None,
             }
             return;
@@ -649,7 +671,16 @@ fn snap(
 /// Resolve a released drag: snap into the nearest legal pile, else back to origin.
 fn resolve_drop(session: &mut Session, anim: &mut Animator, layout: &Layout, d: Drag) {
     let from = d.top_left();
-    if let Some(pile) = nearest_pile(&session.state, layout, d.pos.x, d.pos.y) {
+    // On touch the card is drawn lifted above the finger, so hit-test the drop at
+    // the card's drawn position (pointer shifted up by the lift), not the raw
+    // pointer — this makes landing the visible card on a pile register the same
+    // forgiving drop as on desktop (where the lift is zero).
+    let lift = if layout.mobile {
+        layout.card_w * layout::DRAG_LIFT_FRAC
+    } else {
+        0.0
+    };
+    if let Some(pile) = nearest_pile(&session.state, layout, d.pos.x, d.pos.y - lift) {
         if let Some(mv) = resolve(&session.state, d.source, pile) {
             animate_move(session, anim, layout, mv, d.cards, from);
             return;

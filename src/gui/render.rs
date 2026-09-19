@@ -6,7 +6,7 @@ use macroquad::prelude::*;
 use crate::anim::Animator;
 use crate::assets::Assets;
 use crate::input::{Drag, Pile, Source};
-use crate::layout::{ButtonId, Layout, NUM_TABLEAU};
+use crate::layout::{ButtonId, Layout, DRAG_LIFT_FRAC, NUM_TABLEAU};
 use crate::session::Session;
 use crate::solver::Status;
 use klondike::{Card, Color as CardColor, Suit};
@@ -100,15 +100,15 @@ fn draw_back(assets: &Assets, r: Rect) {
     }
 }
 
-/// Draw one card (face-up or face-down) into `r`. `mobile` prefers the
-/// higher-legibility mobile card set when it is present.
-fn draw_card(assets: &Assets, r: Rect, card: Card, mobile: bool) {
+/// Draw one card (face-up or face-down) into `r`. `detailed` prefers the
+/// higher-legibility detailed card set when it is present.
+fn draw_card(assets: &Assets, r: Rect, card: Card, detailed: bool) {
     if !card.face_up {
         draw_back(assets, r);
         return;
     }
     card_frame(r);
-    if let Some(tex) = assets.face(card.rank, card.suit, mobile) {
+    if let Some(tex) = assets.face(card.rank, card.suit, detailed) {
         draw_texture_ex(tex, r.x, r.y, WHITE, tex_params(r.w, r.h));
         return;
     }
@@ -136,11 +136,11 @@ fn draw_card(assets: &Assets, r: Rect, card: Card, mobile: bool) {
 }
 
 /// Draw a downward-fanned run of cards starting at top-left `at`.
-fn draw_run(assets: &Assets, at: Vec2, cards: &[Card], card_w: f32, fan_dy: f32, mobile: bool) {
+fn draw_run(assets: &Assets, at: Vec2, cards: &[Card], card_w: f32, fan_dy: f32, detailed: bool) {
     let card_h = card_w * 1.4;
     for (i, card) in cards.iter().enumerate() {
         let r = Rect::new(at.x, at.y + i as f32 * fan_dy, card_w, card_h);
-        draw_card(assets, r, *card, mobile);
+        draw_card(assets, r, *card, detailed);
     }
 }
 
@@ -241,9 +241,11 @@ pub fn board(
     drag: Option<&Drag>,
     anim: &Animator,
     show_seed: bool,
+    detailed: bool,
 ) {
     clear_background(TABLE);
     let state = &session.state;
+    // `mobile` drives the touch drag lift/zoom; `detailed` selects the deck art.
     let mobile = layout.mobile;
 
     // How many top cards of a pile to hide: those flying in (animations) plus,
@@ -291,7 +293,7 @@ pub fn board(
             if i + hide_top >= shown {
                 continue;
             }
-            draw_card(assets, waste_rect(i), *card, mobile);
+            draw_card(assets, waste_rect(i), *card, detailed);
             drawn += 1;
         }
         if drawn == 0 {
@@ -307,7 +309,7 @@ pub fn board(
             .len()
             .saturating_sub(hidden(Pile::Foundation(i), drag_here));
         match visible.checked_sub(1).and_then(|idx| cards.get(idx)) {
-            Some(card) => draw_card(assets, *r, *card, mobile),
+            Some(card) => draw_card(assets, *r, *card, detailed),
             None => draw_placeholder(*r),
         }
     }
@@ -327,22 +329,26 @@ pub fn board(
             continue;
         }
         for (index, card) in cards[..visible].iter().enumerate() {
-            draw_card(assets, layout.tableau_card_rect(col, index), *card, mobile);
+            draw_card(assets, layout.tableau_card_rect(col, index), *card, detailed);
         }
     }
 
     // In-flight snap animations, on top of the board.
     let now = get_time();
     for a in &anim.anims {
-        draw_run(assets, a.pos(now), &a.cards, a.card_w, a.fan_dy, mobile);
+        draw_run(assets, a.pos(now), &a.cards, a.card_w, a.fan_dy, detailed);
     }
 
-    // The dragged run follows the pointer, lifted + enlarged on touch so a
-    // finger doesn't occlude it.
+    // The dragged run follows the pointer, lifted + modestly enlarged on touch so a
+    // finger doesn't occlude it (a subtle pick-up cue, not an oversized card).
     if let Some(d) = drag {
-        let scale = if mobile { 1.15 } else { 1.0 };
+        let scale = if mobile { 1.06 } else { 1.0 };
         let cw = layout.card_w * scale;
-        let lift = if mobile { layout.card_w * 0.9 } else { 0.0 };
+        let lift = if mobile {
+            layout.card_w * DRAG_LIFT_FRAC
+        } else {
+            0.0
+        };
         let tl = d.top_left();
         draw_run(
             assets,
@@ -350,7 +356,7 @@ pub fn board(
             &d.cards,
             cw,
             layout.fan_dy * scale,
-            mobile,
+            detailed,
         );
     }
 
@@ -606,6 +612,7 @@ pub enum SettingRow {
     DrawMode,
     Solver,
     Seed,
+    Deck,
     Close,
 }
 
@@ -613,7 +620,7 @@ pub enum SettingRow {
 fn panel_rect() -> Rect {
     let (sw, sh) = (screen_width(), screen_height());
     let pw = (sw * 0.62).clamp(300.0, 560.0);
-    let ph = (sh * 0.40).clamp(200.0, 320.0);
+    let ph = (sh * 0.46).clamp(240.0, 360.0);
     Rect::new((sw - pw) / 2.0, (sh - ph) / 2.0, pw, ph)
 }
 
@@ -735,32 +742,51 @@ pub fn settings_rows() -> Vec<(SettingRow, Rect)> {
     let panel = panel_rect();
     let m = panel.w * 0.08;
     let rw = panel.w - 2.0 * m;
-    let rh = (panel.h * 0.16).clamp(34.0, 52.0);
-    let top = panel.y + panel.h * 0.22;
-    let step = rh + panel.h * 0.04;
-    let mut rows: Vec<(SettingRow, Rect)> =
-        [SettingRow::DrawMode, SettingRow::Solver, SettingRow::Seed]
-            .iter()
-            .enumerate()
-            .map(|(i, id)| (*id, Rect::new(panel.x + m, top + i as f32 * step, rw, rh)))
-            .collect();
-    // Close button at the bottom center.
+    // Close button at the bottom center (laid out first so the setting rows can
+    // fill the band between the title and it, whatever the row count).
     let bw = (panel.w * 0.32).min(180.0);
     let bh = (panel.h * 0.18).clamp(38.0, 56.0);
-    rows.push((
-        SettingRow::Close,
-        Rect::new(
-            panel.x + (panel.w - bw) / 2.0,
-            panel.y + panel.h - bh - panel.h * 0.08,
-            bw,
-            bh,
-        ),
-    ));
+    let close = Rect::new(
+        panel.x + (panel.w - bw) / 2.0,
+        panel.y + panel.h - bh - panel.h * 0.06,
+        bw,
+        bh,
+    );
+    // Evenly distribute the setting rows in the band from below the title to just
+    // above the Close button.
+    let ids = [
+        SettingRow::DrawMode,
+        SettingRow::Solver,
+        SettingRow::Seed,
+        SettingRow::Deck,
+    ];
+    let top = panel.y + panel.h * 0.20;
+    let bottom = close.y - panel.h * 0.04;
+    let slot = (bottom - top) / ids.len() as f32;
+    let rh = (slot * 0.82).clamp(30.0, 52.0);
+    let mut rows: Vec<(SettingRow, Rect)> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| {
+            (
+                *id,
+                Rect::new(panel.x + m, top + i as f32 * slot + (slot - rh) / 2.0, rw, rh),
+            )
+        })
+        .collect();
+    rows.push((SettingRow::Close, close));
     rows
 }
 
-/// Draw the Settings dialog reflecting the current toggle values.
-pub fn settings_overlay(assets: &Assets, draw_three: bool, solver_on: bool, show_seed: bool) {
+/// Draw the Settings dialog reflecting the current toggle values. `deck_override`
+/// is `None` for Auto, `Some(true)` for Detailed, `Some(false)` for Standard.
+pub fn settings_overlay(
+    assets: &Assets,
+    draw_three: bool,
+    solver_on: bool,
+    show_seed: bool,
+    deck_override: Option<bool>,
+) {
     let (sw, sh) = (screen_width(), screen_height());
     draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.0, 0.0, 0.0, 0.5));
     let panel = panel_rect();
@@ -790,6 +816,14 @@ pub fn settings_overlay(assets: &Assets, draw_three: bool, solver_on: bool, show
             SettingRow::DrawMode => ("Draw (next game)", if draw_three { "three" } else { "one" }),
             SettingRow::Solver => ("Background solver", if solver_on { "on" } else { "off" }),
             SettingRow::Seed => ("Show seed", if show_seed { "on" } else { "off" }),
+            SettingRow::Deck => (
+                "Deck",
+                match deck_override {
+                    None => "auto",
+                    Some(true) => "detailed",
+                    Some(false) => "standard",
+                },
+            ),
             SettingRow::Close => unreachable!(),
         };
         let fs = (r.h * 0.5).round();

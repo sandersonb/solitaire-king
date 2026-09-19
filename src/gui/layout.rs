@@ -8,8 +8,26 @@ pub const NUM_TABLEAU: usize = 7;
 
 /// Card height as a multiple of card width.
 const CARD_ASPECT: f32 = 1.4;
-/// Minimum vertical fan spacing between stacked cards, as a fraction of card height.
+/// Minimum vertical fan spacing between stacked cards, as a fraction of card
+/// height (the absolute floor the fan may be squeezed to on extreme viewports).
 const MIN_FAN_FRAC: f32 = 0.10;
+/// Fan spacing the card size is budgeted for: the tallest column is sized to fit
+/// at this *comfortable* overlap rather than the minimum, so on short (landscape)
+/// viewports cards shrink a little instead of collapsing the fan and hiding suits.
+const SIZING_FAN_FRAC: f32 = 0.18;
+
+/// Logical viewport width (in points) at or below which the higher-legibility
+/// "detailed" card set is preferred. Set just above a large phone's landscape
+/// width (iPhone 17 Pro Max ≈ 956) and safely below the smallest iPad (≈1133),
+/// so phones get the detailed deck and tablets/desktops get the standard deck.
+/// This is independent of the touch/mobile-UI profile.
+pub const DETAILED_DECK_MAX: f32 = 960.0;
+
+/// Vertical lift of a picked-up card above the pointer on touch, as a fraction of
+/// card width, so a finger doesn't occlude it. Shared by the renderer (to draw the
+/// lifted card) and input (to hit-test the drop where the card is drawn) so the two
+/// cannot drift apart.
+pub const DRAG_LIFT_FRAC: f32 = 0.9;
 
 /// An on-screen control-bar button.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -29,8 +47,13 @@ pub struct Layout {
     pub tableau: [Rect; NUM_TABLEAU],
     /// Vertical offset between successive cards in a column.
     pub fan_dy: f32,
-    /// True on narrow/portrait/touch viewports (prefers mobile card art, etc.).
+    /// True on narrow/portrait/touch viewports: drives the mobile UI profile
+    /// (taller control bar, drag lift/zoom). Distinct from `detailed_deck`.
     pub mobile: bool,
+    /// True when the detailed card set should be preferred, decided purely by
+    /// logical viewport width (see `DETAILED_DECK_MAX`), independent of `mobile`.
+    /// The default deck signal; a settings override may supersede it.
+    pub detailed_deck: bool,
     /// The on-screen control bar along the bottom edge.
     pub bar: Rect,
     /// On-screen buttons within the bar.
@@ -44,8 +67,13 @@ impl Layout {
     /// tallest column (`max_col_len` cards) fits the available height. `touch`
     /// forces the mobile profile even on a wide viewport.
     pub fn compute(sw: f32, sh: f32, max_col_len: usize, touch: bool) -> Layout {
-        // Mobile profile: touch device, portrait, or a narrow window.
+        // Mobile UI profile: touch device, portrait, or a narrow window.
         let mobile = touch || sw < sh || sw < 700.0;
+
+        // Deck art is chosen by logical width alone, independent of the mobile UI
+        // profile: phones get the detailed set, larger tablets/desktops the
+        // standard set (a settings override may still supersede this at draw time).
+        let detailed_deck = sw <= DETAILED_DECK_MAX;
 
         let margin = sw * 0.02;
         let gap = margin * 0.6;
@@ -64,7 +92,10 @@ impl Layout {
         // The usable height excludes the control bar.
         let usable_h = sh - bar_h;
         let n = max_col_len.max(1) as f32;
-        let col_span = 2.0 + MIN_FAN_FRAC * (n - 1.0); // top-row card + tallest column
+        // Budget the card size for a comfortable fan (not the minimum), so a tall
+        // column on a short viewport shrinks the cards rather than collapsing the
+        // fan until suits are hidden.
+        let col_span = 2.0 + SIZING_FAN_FRAC * (n - 1.0); // top-row card + tallest column
         let height_card_h = ((usable_h * 0.96 - 3.0 * margin) / col_span).max(1.0);
         let height_card_w = height_card_h / CARD_ASPECT;
 
@@ -128,6 +159,7 @@ impl Layout {
             tableau,
             fan_dy,
             mobile,
+            detailed_deck,
             bar,
             buttons,
             indicator,
