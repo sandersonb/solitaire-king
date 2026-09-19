@@ -17,17 +17,18 @@ const MIN_FAN_FRAC: f32 = 0.10;
 const SIZING_FAN_FRAC: f32 = 0.18;
 
 /// Logical viewport width (in points) at or below which the higher-legibility
-/// "detailed" card set is preferred. Set just above a large phone's landscape
+/// "mobile" card set is preferred. Set just above a large phone's landscape
 /// width (iPhone 17 Pro Max ≈ 956) and safely below the smallest iPad (≈1133),
-/// so phones get the detailed deck and tablets/desktops get the standard deck.
+/// so phones get the mobile deck and tablets/desktops get the standard deck.
 /// This is independent of the touch/mobile-UI profile.
-pub const DETAILED_DECK_MAX: f32 = 960.0;
+pub const MOBILE_DECK_MAX: f32 = 960.0;
 
 /// Vertical lift of a picked-up card above the pointer on touch, as a fraction of
-/// card width, so a finger doesn't occlude it. Shared by the renderer (to draw the
-/// lifted card) and input (to hit-test the drop where the card is drawn) so the two
+/// card width, so a finger doesn't occlude it — kept conservative so the card
+/// doesn't jump far from the finger. Shared by the renderer (to draw the lifted
+/// card) and input (to hit-test the drop where the card is drawn) so the two
 /// cannot drift apart.
-pub const DRAG_LIFT_FRAC: f32 = 0.9;
+pub const DRAG_LIFT_FRAC: f32 = 0.45;
 
 /// An on-screen control-bar button.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -48,12 +49,12 @@ pub struct Layout {
     /// Vertical offset between successive cards in a column.
     pub fan_dy: f32,
     /// True on narrow/portrait/touch viewports: drives the mobile UI profile
-    /// (taller control bar, drag lift/zoom). Distinct from `detailed_deck`.
+    /// (taller control bar, drag lift/zoom). Distinct from `mobile_deck`.
     pub mobile: bool,
-    /// True when the detailed card set should be preferred, decided purely by
-    /// logical viewport width (see `DETAILED_DECK_MAX`), independent of `mobile`.
+    /// True when the mobile card set should be preferred, decided purely by
+    /// logical viewport width (see `MOBILE_DECK_MAX`), independent of `mobile`.
     /// The default deck signal; a settings override may supersede it.
-    pub detailed_deck: bool,
+    pub mobile_deck: bool,
     /// The on-screen control bar along the bottom edge.
     pub bar: Rect,
     /// On-screen buttons within the bar.
@@ -71,9 +72,9 @@ impl Layout {
         let mobile = touch || sw < sh || sw < 700.0;
 
         // Deck art is chosen by logical width alone, independent of the mobile UI
-        // profile: phones get the detailed set, larger tablets/desktops the
+        // profile: phones get the mobile set, larger tablets/desktops the
         // standard set (a settings override may still supersede this at draw time).
-        let detailed_deck = sw <= DETAILED_DECK_MAX;
+        let mobile_deck = sw <= MOBILE_DECK_MAX;
 
         let margin = sw * 0.02;
         let gap = margin * 0.6;
@@ -159,7 +160,7 @@ impl Layout {
             tableau,
             fan_dy,
             mobile,
-            detailed_deck,
+            mobile_deck,
             bar,
             buttons,
             indicator,

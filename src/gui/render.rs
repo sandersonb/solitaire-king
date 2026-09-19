@@ -100,15 +100,15 @@ fn draw_back(assets: &Assets, r: Rect) {
     }
 }
 
-/// Draw one card (face-up or face-down) into `r`. `detailed` prefers the
-/// higher-legibility detailed card set when it is present.
-fn draw_card(assets: &Assets, r: Rect, card: Card, detailed: bool) {
+/// Draw one card (face-up or face-down) into `r`. `mobile_deck` prefers the
+/// higher-legibility mobile card set when it is present.
+fn draw_card(assets: &Assets, r: Rect, card: Card, mobile_deck: bool) {
     if !card.face_up {
         draw_back(assets, r);
         return;
     }
     card_frame(r);
-    if let Some(tex) = assets.face(card.rank, card.suit, detailed) {
+    if let Some(tex) = assets.face(card.rank, card.suit, mobile_deck) {
         draw_texture_ex(tex, r.x, r.y, WHITE, tex_params(r.w, r.h));
         return;
     }
@@ -136,11 +136,11 @@ fn draw_card(assets: &Assets, r: Rect, card: Card, detailed: bool) {
 }
 
 /// Draw a downward-fanned run of cards starting at top-left `at`.
-fn draw_run(assets: &Assets, at: Vec2, cards: &[Card], card_w: f32, fan_dy: f32, detailed: bool) {
+fn draw_run(assets: &Assets, at: Vec2, cards: &[Card], card_w: f32, fan_dy: f32, mobile_deck: bool) {
     let card_h = card_w * 1.4;
     for (i, card) in cards.iter().enumerate() {
         let r = Rect::new(at.x, at.y + i as f32 * fan_dy, card_w, card_h);
-        draw_card(assets, r, *card, detailed);
+        draw_card(assets, r, *card, mobile_deck);
     }
 }
 
@@ -241,11 +241,11 @@ pub fn board(
     drag: Option<&Drag>,
     anim: &Animator,
     show_seed: bool,
-    detailed: bool,
+    mobile_deck: bool,
 ) {
     clear_background(TABLE);
     let state = &session.state;
-    // `mobile` drives the touch drag lift/zoom; `detailed` selects the deck art.
+    // `mobile` drives the touch drag lift/zoom; `mobile_deck` selects the deck art.
     let mobile = layout.mobile;
 
     // How many top cards of a pile to hide: those flying in (animations) plus,
@@ -293,7 +293,7 @@ pub fn board(
             if i + hide_top >= shown {
                 continue;
             }
-            draw_card(assets, waste_rect(i), *card, detailed);
+            draw_card(assets, waste_rect(i), *card, mobile_deck);
             drawn += 1;
         }
         if drawn == 0 {
@@ -309,7 +309,7 @@ pub fn board(
             .len()
             .saturating_sub(hidden(Pile::Foundation(i), drag_here));
         match visible.checked_sub(1).and_then(|idx| cards.get(idx)) {
-            Some(card) => draw_card(assets, *r, *card, detailed),
+            Some(card) => draw_card(assets, *r, *card, mobile_deck),
             None => draw_placeholder(*r),
         }
     }
@@ -329,14 +329,14 @@ pub fn board(
             continue;
         }
         for (index, card) in cards[..visible].iter().enumerate() {
-            draw_card(assets, layout.tableau_card_rect(col, index), *card, detailed);
+            draw_card(assets, layout.tableau_card_rect(col, index), *card, mobile_deck);
         }
     }
 
     // In-flight snap animations, on top of the board.
     let now = get_time();
     for a in &anim.anims {
-        draw_run(assets, a.pos(now), &a.cards, a.card_w, a.fan_dy, detailed);
+        draw_run(assets, a.pos(now), &a.cards, a.card_w, a.fan_dy, mobile_deck);
     }
 
     // The dragged run follows the pointer, lifted + modestly enlarged on touch so a
@@ -356,7 +356,7 @@ pub fn board(
             &d.cards,
             cw,
             layout.fan_dy * scale,
-            detailed,
+            mobile_deck,
         );
     }
 
@@ -779,7 +779,7 @@ pub fn settings_rows() -> Vec<(SettingRow, Rect)> {
 }
 
 /// Draw the Settings dialog reflecting the current toggle values. `deck_override`
-/// is `None` for Auto, `Some(true)` for Detailed, `Some(false)` for Standard.
+/// is `None` for Auto, `Some(true)` for Mobile, `Some(false)` for Standard.
 pub fn settings_overlay(
     assets: &Assets,
     draw_three: bool,
@@ -820,7 +820,7 @@ pub fn settings_overlay(
                 "Deck",
                 match deck_override {
                     None => "auto",
-                    Some(true) => "detailed",
+                    Some(true) => "mobile",
                     Some(false) => "standard",
                 },
             ),

@@ -31,7 +31,7 @@ struct Settings {
     solver_enabled: bool,
     show_seed: bool,
     /// Deck override: `None` = Auto (follow the layout's width-based choice),
-    /// `Some(true)` = force detailed, `Some(false)` = force standard.
+    /// `Some(true)` = force mobile, `Some(false)` = force standard.
     deck_override: Option<bool>,
 }
 
@@ -47,11 +47,11 @@ impl Settings {
 
     /// The effective deck signal: the override when set, else the automatic
     /// width-based choice from the layout.
-    fn detailed_deck(&self, layout: &Layout) -> bool {
-        self.deck_override.unwrap_or(layout.detailed_deck)
+    fn mobile_deck(&self, layout: &Layout) -> bool {
+        self.deck_override.unwrap_or(layout.mobile_deck)
     }
 
-    /// Cycle the deck control: Auto → Detailed → Standard → Auto.
+    /// Cycle the deck control: Auto → Mobile → Standard → Auto.
     fn cycle_deck(&mut self) {
         self.deck_override = match self.deck_override {
             None => Some(true),
@@ -298,7 +298,7 @@ async fn main() {
                     drag.as_ref(),
                     &anim,
                     settings.show_seed,
-                    settings.detailed_deck(&layout),
+                    settings.mobile_deck(&layout),
                 );
                 render::solver_indicator(
                     assets,

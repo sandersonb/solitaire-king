@@ -12,7 +12,7 @@ unaffected. Key mechanics established while investigating:
 - **`mobile` flag conflation.** `Layout::compute(sw, sh, _, touch)` computes
   `mobile = touch || sw < sh || sw < 700` and this single boolean currently drives
   three things: the mobile UI profile (control-bar height), the drag lift/zoom
-  (`render.rs`), and the detailed-deck selection (`assets.face(.., mobile)`).
+  (`render.rs`), and the mobile-deck selection (`assets.face(.., mobile)`).
 - **Touch drop mismatch.** On touch the dragged run is drawn at `top_left - lift`
   (`lift = card_w * 0.9`) and scaled `1.15×`, but `nearest_pile` hit-tests the raw
   pointer `(x, y)`. The card visually sits ~0.9 card-widths above the finger, so a
@@ -28,7 +28,7 @@ unaffected. Key mechanics established while investigating:
 - Readable tableau fan on maximized landscape iPad.
 - Subtle (not oversized) touch pick-up.
 - No native page selection / blue highlight on touch.
-- Detailed deck chosen by logical width, decoupled from touch, pivoting just above
+- Mobile deck chosen by logical width, decoupled from touch, pivoting just above
   an iPhone 17 (~960 logical px).
 
 **Non-Goals:**
@@ -43,19 +43,20 @@ unaffected. Key mechanics established while investigating:
 Introduce a separate signal for deck art based purely on logical viewport width,
 leaving the touch-driven `mobile` flag for UI/drag behavior.
 
-- Add a `detailed_deck: bool` field to `Layout` set from `sw <= DETAILED_DECK_MAX`
-  where `DETAILED_DECK_MAX ≈ 960` (just above iPhone 17 Pro Max's ~956 logical
+- Add a `mobile_deck: bool` field to `Layout` set from `sw <= MOBILE_DECK_MAX`
+  where `MOBILE_DECK_MAX ≈ 960` (just above iPhone 17 Pro Max's ~956 logical
   landscape width, safely below the smallest iPad's ~1133). Compare on width so a
-  phone in landscape (874/956) still gets the detailed deck.
-- `render.rs` passes `layout.detailed_deck` (not `layout.mobile`) into
+  phone in landscape (874/956) still gets the mobile deck.
+- `render.rs` passes `layout.mobile_deck` (not `layout.mobile`) into
   `assets.face(rank, suit, ..)` and `draw_card`/`draw_run`.
 - `mobile` keeps driving the control-bar sizing and the drag lift/zoom.
 
 *Why width, not touch:* "pivot just larger than iPhone 17" is only meaningful as a
-resolution rule. Touch-forcing (`touch_seen`) would keep every iPad detailed,
-which is the opposite of the requested pivot. *Alternative considered:* keep the
-touch force and only bump 700→960 — rejected because iPads stay detailed, so the
-pivot wouldn't actually engage (chosen approach confirmed with the user).
+resolution rule. Touch-forcing (`touch_seen`) would keep every iPad on the mobile
+deck, which is the opposite of the requested pivot. *Alternative considered:* keep
+the touch force and only bump 700→960 — rejected because iPads stay on the mobile
+deck, so the pivot wouldn't actually engage (chosen approach confirmed with the
+user).
 
 *Trade accepted (user-approved):* large touch tablets now use the standard deck —
 mitigated by the manual override below.
@@ -63,11 +64,11 @@ mitigated by the manual override below.
 ### 1b. Settings deck override (session-only, immediate)
 Add a session-only override so a mis-guessed auto default is recoverable. Model it
 as a tri-state on the `Settings` struct in `main.rs`, e.g.
-`deck_override: Option<bool>` — `None` = Auto (use `layout.detailed_deck`),
-`Some(true)` = force detailed, `Some(false)` = force standard. The settings dialog
-gains a control that cycles Auto → Detailed → Standard. Deck art is cosmetic, so
+`deck_override: Option<bool>` — `None` = Auto (use `layout.mobile_deck`),
+`Some(true)` = force mobile, `Some(false)` = force standard. The settings dialog
+gains a control that cycles Auto → Mobile → Standard. Deck art is cosmetic, so
 unlike draw mode it applies to the *current* game immediately. The effective signal
-handed to `assets.face(..)` is `deck_override.unwrap_or(layout.detailed_deck)`.
+handed to `assets.face(..)` is `deck_override.unwrap_or(layout.mobile_deck)`.
 
 *Why tri-state, not a plain on/off:* Auto must remain distinct from an explicit
 choice so the deck stays responsive to rotation/resize until the player opts out.
@@ -148,6 +149,6 @@ gestures from stealing input.
 
 ## Open Questions
 
-None blocking. Exact numeric constants (`DETAILED_DECK_MAX`, `MAX_ASPECT`, drag
+None blocking. Exact numeric constants (`MOBILE_DECK_MAX`, `MAX_ASPECT`, drag
 scale) are set to the values agreed with the user and can be nudged during device
 testing without changing the specs or task breakdown.

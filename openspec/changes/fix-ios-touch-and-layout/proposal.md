@@ -27,14 +27,14 @@ targeting those touch/mobile issues.
 - **Suppress native mobile text selection.** The web page SHALL disable
   touch text selection, the touch callout, and the tap highlight so a touch or
   double-tap can't select-all / flash the page blue.
-- **Detailed deck pivots by viewport width, decoupled from the touch flag.** The
+- **Mobile deck pivots by viewport width, decoupled from the touch flag.** The
   higher-legibility "mobile" deck SHALL be chosen by logical viewport width
   (phone-sized, threshold just above an iPhone 17's ~960 logical px), independent
-  of whether the device is touch. Phones get the detailed deck; larger tablets and
+  of whether the device is touch. Phones get the mobile deck; larger tablets and
   desktops get the standard deck. The mobile *UI* profile (control bar, drag
   lift, drop-zone handling) stays driven by touch/portrait/narrow as today.
 - **Settings deck override.** The settings dialog SHALL add a deck control with
-  three states — Auto (the width-based default above), Detailed, and Standard — so
+  three states — Auto (the width-based default above), Mobile, and Standard — so
   the player can override the auto pick if it guesses wrong for their device. The
   override applies immediately and is session-only (real persistence is deferred
   to a later change).
@@ -50,11 +50,11 @@ targeting those touch/mobile issues.
 - `gui-rendering`: (a) board layout sizes cards to a comfortable tableau fan so
   suits stay readable on short/landscape viewports; (b) the touch pick-up
   enlargement is reduced; (c) the
-  detailed card-image set is selected by logical viewport width, decoupled from
+  mobile card-image set is selected by logical viewport width, decoupled from
   the touch/mobile-UI profile, unless overridden in settings; (d) the settings
   dialog renders the deck control.
 - `gui-shell`: the settings dialog gains a session-only deck override
-  (Auto / Detailed / Standard) applied immediately.
+  (Auto / Mobile / Standard) applied immediately.
 - `gui-distribution`: the browser page suppresses native touch text selection,
   callout, and tap-highlight.
 

@@ -20,7 +20,7 @@ The GUI SHALL render the full board: the four foundations and the stock and wast
 - **THEN** the cards are sized down so the column fits with comfortable vertical spacing, and enough of each overlapped card (its rank/suit corner) stays visible for suits to be distinguishable
 
 ### Requirement: Card rendering
-Face-up cards SHALL show their rank and suit; face-down cards SHALL show a card back; empty piles SHALL show a placeholder outline. Red suits (hearts, diamonds) SHALL be visually distinct from black suits (clubs, spades). Cards SHALL render from image sprites when available, and SHALL fall back to a procedurally drawn card (rank and suit on a card shape) when sprites are absent, so the game is always playable. The GUI SHALL prefer a higher-legibility "detailed" card image set on phone-sized viewports — selected by the logical viewport width being at or below a phone-class threshold (just above a large phone's width) — falling back to the standard card set, then to the procedural card. This automatic deck selection SHALL depend only on viewport size, independent of whether the device is touch, so larger touch tablets use the standard set while phones use the detailed set. A settings deck override (Detailed or Standard) SHALL supersede the automatic choice when set; Auto SHALL follow the width-based selection.
+Face-up cards SHALL show their rank and suit; face-down cards SHALL show a card back; empty piles SHALL show a placeholder outline. Red suits (hearts, diamonds) SHALL be visually distinct from black suits (clubs, spades). Cards SHALL render from image sprites when available, and SHALL fall back to a procedurally drawn card (rank and suit on a card shape) when sprites are absent, so the game is always playable. The GUI SHALL prefer a higher-legibility "mobile" card image set on phone-sized viewports — selected by the logical viewport width being at or below a phone-class threshold (just above a large phone's width) — falling back to the standard card set, then to the procedural card. This automatic deck selection SHALL depend only on viewport size, independent of whether the device is touch, so larger touch tablets use the standard set while phones use the mobile set. A settings deck override (Mobile or Standard) SHALL supersede the automatic choice when set; Auto SHALL follow the width-based selection.
 
 #### Scenario: Face-up vs face-down vs empty
 - **WHEN** a column has face-down cards beneath a face-up card and another pile is empty
@@ -33,15 +33,15 @@ Face-up cards SHALL show their rank and suit; face-down cards SHALL show a card 
 - **THEN** cards render procedurally and the game remains fully playable
 
 #### Scenario: Mobile card art preferred on touch
-- **WHEN** the logical viewport width is at or below the phone-class threshold and the detailed (mobile) card set is present
-- **THEN** cards render from the detailed set; when it is absent the standard set (then the procedural card) is used
+- **WHEN** the logical viewport width is at or below the phone-class threshold and the mobile card set is present
+- **THEN** cards render from the mobile set; when it is absent the standard set (then the procedural card) is used
 
 #### Scenario: Standard deck on larger viewports regardless of touch
 - **WHEN** the logical viewport width is above the phone-class threshold, including on a touch tablet
 - **THEN** cards render from the standard set
 
 #### Scenario: Settings override supersedes the automatic deck
-- **WHEN** the settings deck control is set to Detailed or Standard
+- **WHEN** the settings deck control is set to Mobile or Standard
 - **THEN** cards render from that set regardless of viewport width, and setting it back to Auto restores the width-based choice
 
 ### Requirement: Status, seed, and drag feedback display
@@ -66,7 +66,7 @@ The GUI SHALL display the seed (as a pronounceable seed string), move count, sco
 ### Requirement: Overlays, settings dialog, and loading rendering
 The GUI SHALL render, on top of the board: the state-dependent solver overlay (its
 text and any action button per status); the settings dialog (draw mode, solver
-enable, seed visibility, and the deck control with its Auto / Detailed / Standard
+enable, seed visibility, and the deck control with its Auto / Mobile / Standard
 states); and an asset-loading progress screen (a spinner or progress
 bar) shown while assets load. Open overlays/dialogs SHALL dim or otherwise separate
 themselves from the board.
@@ -77,7 +77,7 @@ themselves from the board.
 
 #### Scenario: Settings dialog is drawn
 - **WHEN** the settings dialog is open
-- **THEN** it renders the draw-mode choice, the solver-enable toggle, the seed-visibility toggle, and the deck control showing its current Auto / Detailed / Standard state
+- **THEN** it renders the draw-mode choice, the solver-enable toggle, the seed-visibility toggle, and the deck control showing its current Auto / Mobile / Standard state
 
 #### Scenario: Loading progress is drawn
 - **WHEN** assets are still loading
