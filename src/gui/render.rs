@@ -59,6 +59,15 @@ fn tex_params(w: f32, h: f32) -> DrawTextureParams {
     }
 }
 
+/// Like `tex_params` but rotated `rot` radians about the destination's center.
+fn tex_params_rot(w: f32, h: f32, rot: f32) -> DrawTextureParams {
+    DrawTextureParams {
+        dest_size: Some(vec2(w, h)),
+        rotation: rot,
+        ..Default::default()
+    }
+}
+
 const BORDER: Color = Color::new(0.15, 0.15, 0.15, 1.0);
 
 fn corner_radius(r: Rect) -> f32 {
@@ -133,6 +142,69 @@ fn draw_card(assets: &Assets, r: Rect, card: Card, mobile_deck: bool) {
         big,
         color,
     );
+}
+
+/// Fill the quad `[c0,c1,c2,c3]` (in order around the perimeter) with `color`.
+fn fill_quad(c0: Vec2, c1: Vec2, c2: Vec2, c3: Vec2, color: Color) {
+    draw_triangle(c0, c1, c2, color);
+    draw_triangle(c0, c2, c3, color);
+}
+
+/// Fill a rounded rectangle of size `w×h` centered at `center`, rotated `rot`
+/// radians, with corner radius `radius` — the rotated analogue of `round_rect`
+/// (a cross of two rects plus four corner circles).
+fn fill_round_rot(center: Vec2, w: f32, h: f32, radius: f32, rot: f32, color: Color) {
+    let (hw, hh) = (w / 2.0, h / 2.0);
+    let r = radius.min(hw).min(hh);
+    let (s, c) = rot.sin_cos();
+    let at = |dx: f32, dy: f32| vec2(center.x + dx * c - dy * s, center.y + dx * s + dy * c);
+    // A centered `ax×ay` (half-extent) rotated quad.
+    let quad = |ax: f32, ay: f32| {
+        fill_quad(at(-ax, -ay), at(ax, -ay), at(ax, ay), at(-ax, ay), color);
+    };
+    quad(hw, hh - r); // tall bar
+    quad(hw - r, hh); // wide bar
+    // Corner discs at the inset corner centers (rotation-invariant).
+    for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+        let p = at(sx * (hw - r), sy * (hh - r));
+        draw_circle(p.x, p.y, r, color);
+    }
+}
+
+/// Draw a face-up card centered at `center`, size `w×h`, rotated `rot` radians —
+/// a rotated white body + dark border with the (rotated) face sprite on top. Used
+/// by the win celebration, where cards tumble. Falls back to an unrotated label.
+fn draw_rot_card(assets: &Assets, center: Vec2, w: f32, h: f32, rot: f32, card: Card, mobile_deck: bool) {
+    let b = (w * 0.02).max(1.5);
+    let radius = w * 0.09; // matches `corner_radius` for the resting cards
+    // Rounded border (slightly larger), then the white body.
+    fill_round_rot(center, w + 2.0 * b, h + 2.0 * b, radius + b, rot, BORDER);
+    fill_round_rot(center, w, h, radius, rot, WHITE);
+    let (hw, hh) = (w / 2.0, h / 2.0);
+    if let Some(tex) = assets.face(card.rank, card.suit, mobile_deck) {
+        // draw_texture_ex rotates about the dest rect's center.
+        draw_texture_ex(
+            tex,
+            center.x - hw,
+            center.y - hh,
+            WHITE,
+            tex_params_rot(w, h, rot),
+        );
+    } else {
+        // Rare fallback (no sprites): a centered upright label.
+        let color = suit_color(card);
+        let label = format!("{}{}", card.rank.label(), suit_letter(card.suit));
+        let fs = (h * 0.28).round();
+        let dims = measure(assets.font.as_ref(), &label, fs);
+        text(
+            assets.font.as_ref(),
+            &label,
+            center.x - dims.width / 2.0,
+            center.y + fs * 0.35,
+            fs,
+            color,
+        );
+    }
 }
 
 /// Draw a downward-fanned run of cards starting at top-left `at`.
@@ -247,6 +319,10 @@ pub fn board(
     let state = &session.state;
     // `mobile` drives the touch drag lift/zoom; `mobile_deck` selects the deck art.
     let mobile = layout.mobile;
+    // During the win celebration the foundation cards become falling sprites; the
+    // board paints the next not-yet-launched card on each pile (a "draining" deck)
+    // so a card never appears to fall from an empty slot.
+    let celebration = anim.celebration();
 
     // How many top cards of a pile to hide: those flying in (animations) plus,
     // for the drag source, the run being carried.
@@ -301,15 +377,21 @@ pub fn board(
         }
     }
 
-    // Foundations.
+    // Foundations. During the celebration, show the next card still resting on
+    // each pile (the launching card above it falls away); otherwise the top card.
     for (i, r) in layout.foundations.iter().enumerate() {
-        let cards = state.foundations[i].cards();
-        let drag_here = usize::from(drag_src == Some(Source::Foundation(i)));
-        let visible = cards
-            .len()
-            .saturating_sub(hidden(Pile::Foundation(i), drag_here));
-        match visible.checked_sub(1).and_then(|idx| cards.get(idx)) {
-            Some(card) => draw_card(assets, *r, *card, mobile_deck),
+        let top = if let Some(cel) = celebration {
+            cel.resting_top(i)
+        } else {
+            let drag_here = usize::from(drag_src == Some(Source::Foundation(i)));
+            let cards = state.foundations[i].cards();
+            let visible = cards
+                .len()
+                .saturating_sub(hidden(Pile::Foundation(i), drag_here));
+            visible.checked_sub(1).and_then(|idx| cards.get(idx)).copied()
+        };
+        match top {
+            Some(card) => draw_card(assets, *r, card, mobile_deck),
             None => draw_placeholder(*r),
         }
     }
@@ -362,12 +444,32 @@ pub fn board(
 
     draw_status(session, assets, show_seed);
 
-    // The win banner dims the board; the control bar is drawn on top of it so its
-    // buttons (New, Settings) stay visible and usable after a win.
-    if session.is_won() {
-        draw_win_banner(session, assets);
+    // Win celebration: the cascade is drawn whenever cards are present — while it
+    // plays and after it finishes (the settled cards stay until a new game). The
+    // banner/control bar are suppressed only while it is actively playing; once it
+    // finishes the banner shows over the settled cards (control bar on top so
+    // New/Settings stay usable).
+    if let Some(cel) = anim.celebration() {
+        draw_celebration(assets, cel);
     }
-    draw_control_bar(assets, layout, session.is_won());
+    if !anim.celebration_active() {
+        if session.is_won() {
+            draw_win_banner(session, assets);
+        }
+        draw_control_bar(assets, layout, session.is_won());
+    }
+}
+
+/// Draw the win-celebration cascade: each launched card as a rotated sprite.
+fn draw_celebration(assets: &Assets, cel: &crate::anim::Celebration) {
+    let (w, h, deck) = (cel.card_w(), cel.card_h(), cel.mobile_deck());
+    for f in cel.cards() {
+        // Only launched cards are visible.
+        if f.visible() {
+            let center = vec2(f.pos.x + w / 2.0, f.pos.y + h / 2.0);
+            draw_rot_card(assets, center, w, h, f.rot, f.card, deck);
+        }
+    }
 }
 
 const BTN_BG: Color = Color::new(0.08, 0.30, 0.16, 1.0);

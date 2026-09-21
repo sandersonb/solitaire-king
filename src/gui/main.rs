@@ -10,7 +10,7 @@ mod solver;
 
 use macroquad::prelude::*;
 
-use anim::{Animator, CardAnim, SNAP_SECS};
+use anim::{Animator, CardAnim, Celebration, CELEBRATION_SECS, SNAP_SECS};
 use assets::{Assets, Loader};
 use input::{
     auto_target, hit_test, move_dest, nearest_pile, read_pointer, resolve, source_of, Drag, Hit,
@@ -173,6 +173,8 @@ async fn main() {
     let mut last_tap = 0.0f64;
     let mut last_hit: Option<Hit> = None;
     let mut touch_seen = false;
+    // Once-per-win guard so the celebration starts a single time per won game.
+    let mut win_celebrated = false;
 
     loop {
         let ptr = read_pointer();
@@ -216,6 +218,58 @@ async fn main() {
                     session.set_elapsed((get_time() - game_start).max(0.0) as u64);
                 }
                 anim.tick(get_time());
+
+                // --- Win celebration: highest-priority sub-phase of play. ---
+                // Reset the guard whenever not won, and clear any leftover settled
+                // cascade (a new game removes the cards; that's the only time).
+                if !session.is_won() {
+                    win_celebrated = false;
+                    anim.end_celebration();
+                }
+                // Start the cascade once, on a win reached by play (not auto-solve).
+                if session.is_won()
+                    && !session.was_auto_solved()
+                    && !session.is_auto_solving()
+                    && !win_celebrated
+                    && !anim.celebration_active()
+                {
+                    let card_h = layout.foundations[0].h;
+                    anim.start_celebration(Celebration::start(
+                        &session.state.foundations,
+                        &layout.foundations,
+                        layout.card_w,
+                        card_h,
+                        settings.mobile_deck(&layout),
+                        get_time(),
+                    ));
+                    win_celebrated = true;
+                }
+                // While it plays: advance it, end on click/tap or timeout, and draw
+                // only the cascade (input is swallowed; the banner waits its turn).
+                if anim.celebration_active() {
+                    let now = get_time();
+                    anim.update_celebration(get_frame_time(), screen_width(), screen_height(), now);
+                    let over = ptr.pressed
+                        || anim
+                            .celebration()
+                            .is_none_or(|c| c.elapsed(now) >= CELEBRATION_SECS);
+                    if over {
+                        // Stop the motion but keep the settled cards; the banner
+                        // now shows over them until a new game.
+                        anim.finish_celebration();
+                    }
+                    render::board(
+                        &session,
+                        assets,
+                        &layout,
+                        None,
+                        &anim,
+                        settings.show_seed,
+                        settings.mobile_deck(&layout),
+                    );
+                    next_frame().await;
+                    continue;
+                }
 
                 // Input priority: unwinnable dialog → overlay → auto-solve → board.
                 if assist.dialog_open() {
