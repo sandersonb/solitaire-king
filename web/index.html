@@ -73,6 +73,12 @@
     <canvas id="glcanvas" tabindex="1"></canvas>
     <!-- macroquad/miniquad JS glue, vendored for a fully self-contained deploy. -->
     <script src="mq_js_bundle.js"></script>
+    <!-- Persistent local storage (quad-storage) for high score, stats, settings.
+         sapp_jsutils.js provides the js_object/get_js_object globals quad-storage.js
+         uses (the bundle scopes its own copy privately); both load after the bundle
+         and before the wasm. -->
+    <script src="sapp_jsutils.js"></script>
+    <script src="quad-storage.js"></script>
     <script>
       load("klondike-gui.wasm");
     </script>

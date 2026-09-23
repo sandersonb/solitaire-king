@@ -306,6 +306,7 @@ fn fmt_time(secs: u64) -> String {
 /// carried by the pointer (its source cards are hidden and drawn on top);
 /// `anim` holds in-flight snap animations (whose destination cards are hidden
 /// in the static board until they land).
+#[allow(clippy::too_many_arguments)]
 pub fn board(
     session: &Session,
     assets: &Assets,
@@ -314,6 +315,8 @@ pub fn board(
     anim: &Animator,
     show_seed: bool,
     mobile_deck: bool,
+    high_score: Option<crate::store::HighScore>,
+    new_high: bool,
 ) {
     clear_background(TABLE);
     let state = &session.state;
@@ -454,7 +457,7 @@ pub fn board(
     }
     if !anim.celebration_active() {
         if session.is_won() {
-            draw_win_banner(session, assets);
+            draw_win_banner(session, assets, high_score, new_high);
         }
         draw_control_bar(assets, layout, session.is_won());
     }
@@ -978,7 +981,12 @@ fn draw_status(session: &Session, assets: &Assets, show_seed: bool) {
     }
 }
 
-fn draw_win_banner(session: &Session, assets: &Assets) {
+fn draw_win_banner(
+    session: &Session,
+    assets: &Assets,
+    high_score: Option<crate::store::HighScore>,
+    new_high: bool,
+) {
     let sw = screen_width();
     let sh = screen_height();
     draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.0, 0.0, 0.0, 0.55));
@@ -1015,5 +1023,16 @@ fn draw_win_banner(session: &Session, assets: &Assets) {
             CREAM,
         );
     }
-    center("New game to play again", y + sh * 0.16, 22.0, CREAM);
+    // High score (persisted): flag a new record, else show the standing best.
+    if new_high {
+        center("New high score!", y + sh * 0.16, 24.0, HILITE);
+    } else if let Some(h) = high_score {
+        center(
+            &format!("high score {}", h.score),
+            y + sh * 0.16,
+            22.0,
+            CREAM,
+        );
+    }
+    center("New game to play again", y + sh * 0.23, 22.0, CREAM);
 }

@@ -11,6 +11,16 @@ build is deployed to GitHub Pages by `.github/workflows/deploy-pages.yml`.
 so the deployed page has no external runtime dependencies. This file is
 version-matched to the miniquad version that macroquad pulls in.
 
+`web/sapp_jsutils.js` and `web/quad-storage.js` are also **vendored** — the web
+persistence backend (the `quad-storage` crate, web-only; native uses `std::fs` to
+`~/.config`, see `src/gui/store.rs`). They load after `mq_js_bundle.js` and before
+the wasm. `quad-storage.js` calls the `js_object`/`get_js_object` globals that
+`sapp_jsutils.js` defines (the bundle's own sapp_jsutils copy is scoped privately
+and lacks `get_js_object`), so both are required. Both are `version:1`, matching
+the `sapp-jsutils 0.1.x` the crate pulls in. Re-vendor from
+`github.com/optozorax/quad-storage` (js/) and `github.com/not-fl3/sapp-jsutils`
+(js/) if `quad-storage` is bumped.
+
 **When bumping the `macroquad` version in `Cargo.toml`, re-vendor the JS glue:**
 
 ```sh

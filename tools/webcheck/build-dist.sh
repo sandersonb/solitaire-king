@@ -11,7 +11,7 @@ cargo build --release --target wasm32-unknown-unknown --bin klondike-gui
 DIST="tools/webcheck/dist"
 rm -rf "$DIST"
 mkdir -p "$DIST"
-cp web/index.html web/mq_js_bundle.js "$DIST/"
+cp web/index.html web/mq_js_bundle.js web/sapp_jsutils.js web/quad-storage.js "$DIST/"
 cp target/wasm32-unknown-unknown/release/klondike-gui.wasm "$DIST/"
 cp -r assets "$DIST/assets"
 rm -rf "$DIST/assets/cards-svg"   # build-time only, not served (see deploy workflow)

@@ -7,6 +7,7 @@ mod layout;
 mod render;
 mod session;
 mod solver;
+mod store;
 
 use macroquad::prelude::*;
 
@@ -25,7 +26,10 @@ use solver::{Assist, Status};
 /// Press-and-hold threshold for the Undo button to redo (seconds).
 const UNDO_HOLD_SECS: f64 = 0.4;
 
-/// In-session settings (not persisted across launches).
+/// Settings key for persistence (see `store`).
+const SETTINGS_KEY: &str = "settings.v1";
+
+/// Settings, persisted across launches (see `store`).
 struct Settings {
     draw_three: bool,
     solver_enabled: bool,
@@ -69,6 +73,63 @@ impl Settings {
                 DrawMode::One
             },
             ..base
+        }
+    }
+
+    /// Single-char code for the deck override (a=auto, m=mobile, s=standard).
+    fn deck_code(&self) -> char {
+        match self.deck_override {
+            None => 'a',
+            Some(true) => 'm',
+            Some(false) => 's',
+        }
+    }
+
+    fn to_field(&self) -> String {
+        format!(
+            "{}|{}|{}|{}",
+            self.draw_three as u8,
+            self.deck_code(),
+            self.solver_enabled as u8,
+            self.show_seed as u8,
+        )
+    }
+
+    /// Persist the current values (best-effort).
+    fn save(&self) {
+        store::save(SETTINGS_KEY, &self.to_field());
+    }
+
+    /// Overlay any persisted values onto the defaults. Each field is applied
+    /// independently and tolerantly, so a partial/garbled record keeps defaults
+    /// for the unparsable fields.
+    fn apply_persisted(&mut self) {
+        let Some(s) = store::load(SETTINGS_KEY) else {
+            return;
+        };
+        let mut it = s.split('|');
+        if let Some(v) = it.next() {
+            if let Ok(n) = v.trim().parse::<u8>() {
+                self.draw_three = n != 0;
+            }
+        }
+        if let Some(v) = it.next() {
+            self.deck_override = match v.trim() {
+                "m" => Some(true),
+                "s" => Some(false),
+                "a" => None,
+                _ => self.deck_override,
+            };
+        }
+        if let Some(v) = it.next() {
+            if let Ok(n) = v.trim().parse::<u8>() {
+                self.solver_enabled = n != 0;
+            }
+        }
+        if let Some(v) = it.next() {
+            if let Ok(n) = v.trim().parse::<u8>() {
+                self.show_seed = n != 0;
+            }
         }
     }
 }
@@ -165,6 +226,9 @@ async fn main() {
     let mut anim = Animator::new();
     let mut assist = Assist::new(&session.state);
     let mut settings = Settings::from_config(cfg);
+    // Restore persisted settings over the defaults, and sync the solver to match.
+    settings.apply_persisted();
+    assist.set_enabled(settings.solver_enabled, &session.state);
     let mut overlay = Overlay::None;
     let mut undo_press: Option<f64> = None;
     let mut undo_fired = false;
@@ -175,6 +239,14 @@ async fn main() {
     let mut touch_seen = false;
     // Once-per-win guard so the celebration starts a single time per won game.
     let mut win_celebrated = false;
+    // Persisted records: high score, lifetime counters, and a per-game "new high"
+    // flag for the banner. The initial deal counts as a new game started.
+    let mut high_score = store::load_high_score();
+    let mut counters = store::load_counters();
+    let mut new_high = false;
+    counters.new_games += 1;
+    store::save_counters(&counters);
+    let mut last_counted_seed = session.seed();
 
     loop {
         let ptr = read_pointer();
@@ -219,20 +291,43 @@ async fn main() {
                 }
                 anim.tick(get_time());
 
+                // Count each new deal (initial deal counted at startup): the seed
+                // changes only on a new game, across every new-game entry point.
+                if session.seed() != last_counted_seed {
+                    last_counted_seed = session.seed();
+                    counters.new_games += 1;
+                    store::save_counters(&counters);
+                }
+
                 // --- Win celebration: highest-priority sub-phase of play. ---
-                // Reset the guard whenever not won, and clear any leftover settled
-                // cascade (a new game removes the cards; that's the only time).
+                // Reset the guard and new-high flag whenever not won, and clear any
+                // leftover settled cascade (a new game removes the cards).
                 if !session.is_won() {
                     win_celebrated = false;
+                    new_high = false;
                     anim.end_celebration();
                 }
-                // Start the cascade once, on a win reached by play (not auto-solve).
+                // Once, on a win reached by play (not auto-solve): record the high
+                // score / wins, then start the cascade.
                 if session.is_won()
                     && !session.was_auto_solved()
                     && !session.is_auto_solving()
                     && !win_celebrated
                     && !anim.celebration_active()
                 {
+                    counters.wins += 1;
+                    store::save_counters(&counters);
+                    let final_score = session.final_score();
+                    if high_score.is_none_or(|h| final_score > h.score) {
+                        let rec = store::HighScore {
+                            score: final_score,
+                            time_secs: session.elapsed_secs(),
+                            achieved_at: macroquad::miniquad::date::now() as i64,
+                        };
+                        store::save_high_score(&rec);
+                        high_score = Some(rec);
+                        new_high = true;
+                    }
                     let card_h = layout.foundations[0].h;
                     anim.start_celebration(Celebration::start(
                         &session.state.foundations,
@@ -266,6 +361,8 @@ async fn main() {
                         &anim,
                         settings.show_seed,
                         settings.mobile_deck(&layout),
+                        high_score,
+                        new_high,
                     );
                     next_frame().await;
                     continue;
@@ -353,6 +450,8 @@ async fn main() {
                     &anim,
                     settings.show_seed,
                     settings.mobile_deck(&layout),
+                    high_score,
+                    new_high,
                 );
                 render::solver_indicator(
                     assets,
@@ -469,6 +568,9 @@ fn handle_settings(
                 SettingRow::Seed => settings.show_seed = !settings.show_seed,
                 SettingRow::Deck => settings.cycle_deck(),
                 SettingRow::Close => *overlay = Overlay::None,
+            }
+            if row != SettingRow::Close {
+                settings.save(); // persist across launches on every change
             }
             return;
         }

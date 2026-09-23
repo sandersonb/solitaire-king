@@ -1,6 +1,6 @@
 [package]
 name = "klondike"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 description = "Core model for Klondike Solitaire (classic rules, Windows Standard scoring)"
 license = "MIT OR Apache-2.0"
@@ -28,3 +28,8 @@ macroquad = "0.4"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 crossterm = "0.28"
 clap = { version = "4", features = ["derive"] }
+
+# Web-only: persistent local storage via the browser's Web Storage API. Native
+# persistence uses std::fs (see src/gui/store.rs), so no crate is needed there.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+quad-storage = "0.1"
