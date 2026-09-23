@@ -14,6 +14,10 @@ mkdir -p "$DIST"
 cp web/index.html web/mq_js_bundle.js web/sapp_jsutils.js web/quad-storage.js "$DIST/"
 cp target/wasm32-unknown-unknown/release/klondike-gui.wasm "$DIST/"
 cp -r assets "$DIST/assets"
-rm -rf "$DIST/assets/cards-svg"   # build-time only, not served (see deploy workflow)
+# Prune build-time-only sources: the vector deck, the per-card PNG decks (packed
+# into cards-atlas.png / cards-mobile-atlas.png by tools/build_atlases.py), and the
+# original logo (shipped as king-logo.jpg). See the deploy workflow.
+rm -rf "$DIST/assets/cards-svg" "$DIST/assets/cards" "$DIST/assets/cards-mobile" \
+       "$DIST/assets/king-logo.png"
 
 echo "dist assembled at $DIST"

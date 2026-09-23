@@ -59,10 +59,12 @@ fn tex_params(w: f32, h: f32) -> DrawTextureParams {
     }
 }
 
-/// Like `tex_params` but rotated `rot` radians about the destination's center.
-fn tex_params_rot(w: f32, h: f32, rot: f32) -> DrawTextureParams {
+/// Draw params for a card face from an atlas: scale the `source` sub-rect to
+/// `w×h`, optionally rotated `rot` radians about the destination's center.
+fn card_params(w: f32, h: f32, source: Rect, rot: f32) -> DrawTextureParams {
     DrawTextureParams {
         dest_size: Some(vec2(w, h)),
+        source: Some(source),
         rotation: rot,
         ..Default::default()
     }
@@ -117,8 +119,8 @@ fn draw_card(assets: &Assets, r: Rect, card: Card, mobile_deck: bool) {
         return;
     }
     card_frame(r);
-    if let Some(tex) = assets.face(card.rank, card.suit, mobile_deck) {
-        draw_texture_ex(tex, r.x, r.y, WHITE, tex_params(r.w, r.h));
+    if let Some((tex, src)) = assets.face(card.rank, card.suit, mobile_deck) {
+        draw_texture_ex(tex, r.x, r.y, WHITE, card_params(r.w, r.h, src, 0.0));
         return;
     }
     // Procedural fallback: rank + suit letter, colored by suit, on the white frame.
@@ -181,14 +183,14 @@ fn draw_rot_card(assets: &Assets, center: Vec2, w: f32, h: f32, rot: f32, card: 
     fill_round_rot(center, w + 2.0 * b, h + 2.0 * b, radius + b, rot, BORDER);
     fill_round_rot(center, w, h, radius, rot, WHITE);
     let (hw, hh) = (w / 2.0, h / 2.0);
-    if let Some(tex) = assets.face(card.rank, card.suit, mobile_deck) {
+    if let Some((tex, src)) = assets.face(card.rank, card.suit, mobile_deck) {
         // draw_texture_ex rotates about the dest rect's center.
         draw_texture_ex(
             tex,
             center.x - hw,
             center.y - hh,
             WHITE,
-            tex_params_rot(w, h, rot),
+            card_params(w, h, src, rot),
         );
     } else {
         // Rare fallback (no sprites): a centered upright label.

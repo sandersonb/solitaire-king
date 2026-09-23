@@ -1,0 +1,11 @@
+# The web build depends on old not-fl3 crates (sapp-jsutils 0.1.7, quad-storage-sys
+# 0.1.0) whose JS bindings are declared as bare `extern "C"` without a
+# `#[link(wasm_import_module = ...)]` attribute. Modern `wasm-ld` no longer
+# auto-imports such undefined symbols, so the link fails with
+# `undefined symbol: quad_storage_get / js_create_string / ...` (macroquad/miniquad
+# link fine because they use the import-module attribute). `--import-undefined`
+# restores the old behavior — turning the remaining undefined symbols into wasm
+# env imports (which the vendored quad-storage.js / sapp_jsutils.js provide at
+# runtime). Only affects the wasm target; native is unchanged.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=--import-undefined"]

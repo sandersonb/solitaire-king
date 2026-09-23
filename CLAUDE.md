@@ -46,14 +46,25 @@ with `assets/` **on the web target too** (despite the "pc" in the name). The
 deploy workflow therefore serves assets under `dist/assets/`, not the site root.
 Keep those in sync if either the folder call or the workflow's copy step changes.
 
-Runtime asset dirs loaded by the GUI (all under `assets/`):
-- `cards/` — desktop card sprites + `back.png` (with a procedural fallback).
-- `cards-mobile/` — larger-index card set, preferred on touch/narrow viewports;
-  falls back to `cards/` then procedural. Generated from `cards-svg/` — see below.
-- `fonts/ui.ttf` — Atkinson Hyperlegible, used for all GUI text (built-in font
-  fallback if absent). `fonts/OFL.txt` is its license.
+Runtime assets loaded by the GUI (all under `assets/`) — a handful of files so the
+web build starts fast:
+- `cards-atlas.png` — desktop card faces packed in a 13×4 rank×suit grid.
+- `cards-mobile-atlas.png` — larger, higher-legibility faces in a 9-col grid
+  (mildly downscaled to fit one texture), preferred on touch/narrow viewports;
+  falls back to the desktop atlas then to procedural cards.
+- `back.png` — the card back (right-sized). `king-logo.jpg` — splash/banner logo
+  (opaque → JPEG). `fonts/ui.ttf` — Atkinson Hyperlegible (built-in font fallback
+  if absent); `fonts/OFL.txt` is its license.
 
-Build-time only (NOT loaded at runtime, and pruned from `dist/` by the deploy
-workflow): `assets/cards-svg/` — the vector source deck. Regenerate the mobile
-set with `python3 tools/build_mobile_cards.py` (deps in `tools/requirements.txt`;
-`cairosvg` needs the system `cairo` lib).
+The atlas grid convention (cell size, columns, gutter) is shared by
+`tools/build_atlases.py` and `src/gui/assets.rs` — **keep the two in sync.**
+
+Build-time only (NOT loaded at runtime; pruned from `dist/` by the deploy workflow):
+- `assets/cards-svg/` — vector source deck. Regenerate the per-card mobile PNGs with
+  `python3 tools/build_mobile_cards.py` (`cairosvg` needs system `cairo`).
+- `assets/cards/`, `assets/cards-mobile/` — per-card PNG decks, the atlas sources.
+- `assets/king-logo.png` — the original logo.
+
+Regenerate the atlases + right-sized `back.png`/`king-logo.jpg` from those sources
+with `python3 tools/build_atlases.py` (deps: `Pillow`). Re-run it whenever the card
+art, back, or logo changes.

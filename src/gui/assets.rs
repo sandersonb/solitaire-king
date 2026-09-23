@@ -5,8 +5,12 @@
 //! black between frames (a flicker on real GPUs). Driving the load from the main
 //! loop means every frame presents a drawn frame. Missing assets are tolerated —
 //! the renderer falls back to procedural cards.
+//!
+//! Card faces ship as one texture **atlas** per deck (a rank×suit grid) rather
+//! than one file per card, so the web build makes a handful of requests instead of
+//! ~100. `Atlas::source` maps `(rank, suit)` to the card's sub-rect; the grid
+//! convention here must match `tools/build_atlases.py`.
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use macroquad::experimental::coroutines::{start_coroutine, Coroutine};
@@ -14,10 +18,54 @@ use macroquad::prelude::*;
 
 use klondike::{Rank, Suit};
 
+/// Transparent padding around each atlas cell (must match `tools/build_atlases.py`).
+const GUTTER: f32 = 4.0;
+
+/// A packed card-face atlas plus the grid geometry to address it.
+pub struct Atlas {
+    tex: Texture2D,
+    /// Columns in the grid; `col = i % cols`, `row = i / cols`.
+    cols: usize,
+    /// Cell size in atlas pixels.
+    cell_w: f32,
+    cell_h: f32,
+}
+
+impl Atlas {
+    fn new(tex: Texture2D, cols: usize, cell_w: f32, cell_h: f32) -> Atlas {
+        tex.set_filter(FilterMode::Linear);
+        Atlas {
+            tex,
+            cols,
+            cell_w,
+            cell_h,
+        }
+    }
+
+    /// Source rect (in atlas pixels) for a card. `i = suit_index*13 + rank_index`.
+    fn source(&self, rank: Rank, suit: Suit) -> Rect {
+        let i = suit_index(suit) * 13 + (rank.value() as usize - 1);
+        let col = (i % self.cols) as f32;
+        let row = (i / self.cols) as f32;
+        Rect::new(
+            GUTTER + col * (self.cell_w + GUTTER),
+            GUTTER + row * (self.cell_h + GUTTER),
+            self.cell_w,
+            self.cell_h,
+        )
+    }
+}
+
+/// Grid parameters per deck: (atlas filename, columns, cell_w, cell_h). Must match
+/// `tools/build_atlases.py`.
+const DESKTOP_ATLAS: (&str, usize, f32, f32) = ("cards-atlas.png", 13, 222.0, 323.0);
+const MOBILE_ATLAS: (&str, usize, f32, f32) = ("cards-mobile-atlas.png", 9, 450.0, 630.0);
+
 pub struct Assets {
-    pub cards: HashMap<(Rank, Suit), Texture2D>,
-    /// A higher-legibility card set preferred on mobile/touch; may be empty.
-    pub cards_mobile: HashMap<(Rank, Suit), Texture2D>,
+    /// Desktop card-face atlas; `None` if absent (renderer falls back to procedural).
+    cards: Option<Atlas>,
+    /// Higher-legibility mobile atlas, preferred on mobile/touch; may be `None`.
+    cards_mobile: Option<Atlas>,
     pub back: Option<Texture2D>,
     pub logo: Option<Texture2D>,
     /// A bundled legible font for all GUI text; `None` falls back to the built-in.
@@ -25,26 +73,26 @@ pub struct Assets {
 }
 
 impl Assets {
-    /// The face texture for `(rank, suit)`, preferring the mobile set when
-    /// `mobile` is set and it is present, else the desktop set. `None` means the
-    /// renderer should fall back to a procedurally drawn card.
-    pub fn face(&self, rank: Rank, suit: Suit, mobile: bool) -> Option<&Texture2D> {
-        if mobile {
-            if let Some(tex) = self.cards_mobile.get(&(rank, suit)) {
-                return Some(tex);
-            }
-        }
-        self.cards.get(&(rank, suit))
+    /// The face atlas texture and this card's source rect, preferring the mobile
+    /// atlas when `mobile` is set and present, else the desktop atlas. `None` means
+    /// the renderer should fall back to a procedurally drawn card.
+    pub fn face(&self, rank: Rank, suit: Suit, mobile: bool) -> Option<(&Texture2D, Rect)> {
+        let atlas = if mobile {
+            self.cards_mobile.as_ref().or(self.cards.as_ref())
+        } else {
+            self.cards.as_ref()
+        }?;
+        Some((&atlas.tex, atlas.source(rank, suit)))
     }
 }
 
-/// Filename code for a suit (matches common PD deck naming: AS, 10H, ...).
-fn suit_code(suit: Suit) -> char {
+/// Index of a suit in the atlas grid (matches `Suit::ALL`: C, D, H, S).
+fn suit_index(suit: Suit) -> usize {
     match suit {
-        Suit::Clubs => 'C',
-        Suit::Diamonds => 'D',
-        Suit::Hearts => 'H',
-        Suit::Spades => 'S',
+        Suit::Clubs => 0,
+        Suit::Diamonds => 1,
+        Suit::Hearts => 2,
+        Suit::Spades => 3,
     }
 }
 
@@ -54,8 +102,8 @@ enum Slot {
     Font,
     Logo,
     Back,
-    Card(Rank, Suit),
-    Mobile(Rank, Suit),
+    DeskAtlas,
+    MobileAtlas,
 }
 
 #[derive(Default)]
@@ -73,8 +121,8 @@ struct Shared {
 pub struct Loader {
     shared: Arc<Mutex<Shared>>,
     _co: Coroutine,
-    cards: HashMap<(Rank, Suit), Texture2D>,
-    cards_mobile: HashMap<(Rank, Suit), Texture2D>,
+    cards: Option<Atlas>,
+    cards_mobile: Option<Atlas>,
     back: Option<Texture2D>,
     logo: Option<Texture2D>,
     font: Option<Font>,
@@ -86,29 +134,23 @@ impl Loader {
         // page, so the same relative paths resolve.
         set_pc_assets_folder("assets");
 
-        let total = 3 + Suit::ALL.len() * Rank::ALL.len() * 2;
+        // font, logo, back, then the two atlases — a handful of files, not ~100.
+        let jobs: Vec<(Slot, &str)> = vec![
+            (Slot::Font, "fonts/ui.ttf"),
+            (Slot::Logo, "king-logo.jpg"),
+            (Slot::Back, "back.png"),
+            (Slot::DeskAtlas, DESKTOP_ATLAS.0),
+            (Slot::MobileAtlas, MOBILE_ATLAS.0),
+        ];
         let shared = Arc::new(Mutex::new(Shared {
-            total,
+            total: jobs.len(),
             ..Default::default()
         }));
 
         let s = shared.clone();
         let _co = start_coroutine(async move {
-            // font, logo, back first (so the splash has them early), then cards.
-            let mut jobs: Vec<(Slot, String)> = vec![
-                (Slot::Font, "fonts/ui.ttf".to_string()),
-                (Slot::Logo, "king-logo.png".to_string()),
-                (Slot::Back, "cards/back.png".to_string()),
-            ];
-            for suit in Suit::ALL {
-                for rank in Rank::ALL {
-                    let name = format!("{}{}.png", rank.label(), suit_code(suit));
-                    jobs.push((Slot::Card(rank, suit), format!("cards/{name}")));
-                    jobs.push((Slot::Mobile(rank, suit), format!("cards-mobile/{name}")));
-                }
-            }
             for (slot, path) in jobs {
-                if let Ok(bytes) = load_file(&path).await {
+                if let Ok(bytes) = load_file(path).await {
                     s.lock().unwrap().queue.push((slot, bytes));
                 }
                 s.lock().unwrap().fetched += 1;
@@ -119,8 +161,8 @@ impl Loader {
         Loader {
             shared,
             _co,
-            cards: HashMap::new(),
-            cards_mobile: HashMap::new(),
+            cards: None,
+            cards_mobile: None,
             back: None,
             logo: None,
             font: None,
@@ -147,11 +189,13 @@ impl Loader {
                 Slot::Font => self.font = load_ttf_font_from_bytes(&bytes).ok(),
                 Slot::Logo => self.logo = Some(decode(&bytes)),
                 Slot::Back => self.back = Some(decode(&bytes)),
-                Slot::Card(r, s) => {
-                    self.cards.insert((r, s), decode(&bytes));
+                Slot::DeskAtlas => {
+                    let (_, cols, cw, ch) = DESKTOP_ATLAS;
+                    self.cards = Some(Atlas::new(decode(&bytes), cols, cw, ch));
                 }
-                Slot::Mobile(r, s) => {
-                    self.cards_mobile.insert((r, s), decode(&bytes));
+                Slot::MobileAtlas => {
+                    let (_, cols, cw, ch) = MOBILE_ATLAS;
+                    self.cards_mobile = Some(Atlas::new(decode(&bytes), cols, cw, ch));
                 }
             }
         }
@@ -162,8 +206,8 @@ impl Loader {
         };
         if fetch_done && empty {
             Some(Assets {
-                cards: std::mem::take(&mut self.cards),
-                cards_mobile: std::mem::take(&mut self.cards_mobile),
+                cards: self.cards.take(),
+                cards_mobile: self.cards_mobile.take(),
                 back: self.back.take(),
                 logo: self.logo.take(),
                 font: self.font.take(),
@@ -174,7 +218,7 @@ impl Loader {
     }
 }
 
-/// Decode PNG bytes into a linear-filtered texture.
+/// Decode image bytes (PNG or JPEG) into a linear-filtered texture.
 fn decode(bytes: &[u8]) -> Texture2D {
     let tex = Texture2D::from_file_with_format(bytes, None);
     tex.set_filter(FilterMode::Linear);

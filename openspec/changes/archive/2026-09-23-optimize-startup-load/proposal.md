@@ -46,4 +46,7 @@ paint slow, especially on phones.
   cards) from a source sub-rect. Loader fetches a handful of files, not ~107.
 - `.github/workflows/deploy-pages.yml` and `tools/webcheck/build-dist.sh` — ship the
   new asset set; `CLAUDE.md` asset notes updated.
+- `Cargo.toml` — add the `image` crate's `jpeg` feature (macroquad bundles `image`
+  with only png+tga; feature unification then lets it decode the JPEG logo). Patch
+  version bump.
 - No changes to the domain, rules, solver, or CLI. Native behaves the same.

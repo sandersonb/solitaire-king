@@ -24,7 +24,10 @@ See `proposal.md` — Why. Measured deployed payload:
 **Non-Goals:**
 - No redesign of the card art; no runtime SVG; no wasm-size work.
 - Not aggressively downscaling faces (user wants high quality — mild only).
-- No new runtime dependency (image decode already handles PNG/JPEG).
+- Minimal new deps. (Implementation note: macroquad's bundled `image` enables only
+  `png`+`tga`, so the opaque JPEG logo needs the `image` crate's `jpeg` feature —
+  added as a direct dep so Cargo feature-unification lets macroquad decode it. Adds
+  ~150 KB to the wasm, far less than the JPEG saving.)
 
 ## Decisions
 
